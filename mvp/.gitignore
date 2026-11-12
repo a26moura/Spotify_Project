@@ -1,0 +1,6 @@
+runtime/
+__pycache__/
+tests/__pycache__/
+.env
+data/*.json
+*.log
