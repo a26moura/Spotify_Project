@@ -1,0 +1,12 @@
+# Dados pessoais e material de trabalho local (não versionar)
+arquivo/
+mvp/runtime/
+mvp/data/
+
+# Python
+__pycache__/
+*.pyc
+
+# Ambiente e logs
+.env
+*.log

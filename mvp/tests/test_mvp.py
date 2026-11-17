@@ -46,7 +46,7 @@ class Tests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory()
         self.db=Store(Path(self.tmp.name)/'app.sqlite3')
-        self.db.names('a')
+        self.db.set_names('a',DEFAULT_PLAYLISTS)
         self.db.import_tracks('a',[raw()])
         self.db.review('a',ID1,{'genres':['Pop'],'languages':['Inglês'],'playlists':['POP'],'exclude':False})
     def tearDown(self): self.tmp.cleanup()
@@ -73,12 +73,64 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError): self.db.set_names('a',['Rock'])
         with self.assertRaises(ValueError): self.db.set_names('a',['POP','pop'])
     def test_seed_matches_user_decisions(self):
+        if not (Path(__file__).resolve().parents[1]/'data/revisao-consolidada.json').is_file():
+            self.skipTest('Amostra pessoal opcional não distribuída com o aplicativo.')
         self.db.seed('demo:local',Path(__file__).resolve().parents[1]/'data')
         tracks=self.db.tracks('demo:local',True)
         sets=desired_sets(tracks,DEFAULT_PLAYLISTS)
         self.assertEqual({n:len(v) for n,v in sets.items()},{'POP':13,'Sertanejo':4,'Reggaeton':7,'Espanhol':9,'Frances':3,'Trap':6,'Rock':7,'Funk':1})
         self.assertEqual(sum(t['review']['exclude'] for t in tracks),1)
         self.assertEqual(next(t for t in tracks if t['title']=='A Million Dreams')['review']['languages'],['Inglês'])
+    def test_combined_rules_rename_and_manual_override(self):
+        self.db.import_tracks('a',[raw(),raw(ID2)])
+        track=next(t for t in self.db.tracks('a') if t['id']==ID2)
+        track.update(genres=['dance pop'],languages=['Espanhol'])
+        self.db.put('a',track)
+        self.db.target('a','POP','existing')
+        self.db.set_rules('a',[{'previous_name':'POP','name':'Pop latino','genres':['Pop'],'languages':['Espanhol']},
+                               {'name':'Meu artista','artists':['Artist']}, {'name':'Manual'}])
+        names=self.db.names('a');rules=self.db.rules('a')
+        self.assertEqual(suggest(track,names,rules),['Pop latino','Meu artista'])
+        self.assertEqual(self.db.targets('a'),{'Pop latino':'existing'})
+        self.assertEqual(self.db.tracks('a')[0]['review']['playlists'],['Pop latino'])
+        track['languages']=['Inglês']
+        self.assertEqual(suggest(track,names,rules),['Meu artista'])
+        track['review']={'exclude':True,'playlists':['Pop latino']}
+        self.assertEqual(suggest(track,names,rules),[])
+
+    def test_automatic_review_uses_corrected_metadata(self):
+        self.db.set_rules('a',[{'name':'POP','genres':['Pop'],'languages':['Espanhol']}])
+        self.db.review('a',ID1,{'genres':['Pop'],'languages':['Espanhol'],'playlists':[], 'exclude':False,'automatic':True})
+        plan=prepare_plan(self.db,'a',FakeSpotify(),{})
+        self.assertEqual(plan[0]['uris'],['spotify:track:'+ID1])
+        self.db.review('a',ID1,{'genres':['Pop'],'languages':['Espanhol'],'playlists':[], 'exclude':False,'automatic':False})
+        self.assertEqual(prepare_plan(self.db,'a',FakeSpotify(),{})[0]['uris'],[])
+
+    def test_invalid_rules_leave_saved_data_unchanged(self):
+        before=self.db.rules('a')
+        with self.assertRaises(ValueError):self.db.set_rules('a',[{'name':'POP'}, {'name':' pop '}])
+        with self.assertRaises(ValueError):self.db.set_rules('a',[{'name':'POP','genres':'Pop'}])
+        with self.assertRaises(ValueError):self.db.set_rules('a',[{'name':'Rock'}])
+        self.assertEqual(self.db.rules('a'),before)
+        self.assertEqual(self.db.rules('b'),[])
+
+    def test_start_without_private_sample(self):
+        self.assertEqual(self.db.seed('demo:empty',Path(self.tmp.name)/'missing'),0)
+        self.assertEqual(self.db.tracks('demo:empty'),[])
+        self.assertEqual(self.db.names('demo:empty'),[])
+
+    def test_import_classify_create_and_update_by_custom_rules(self):
+        self.db.names('new')
+        self.db.set_rules('new',[{'name':'Minha seleção','artists':['Artist']}])
+        self.db.import_tracks('new',[raw()])
+        api=FakeSpotify()
+        execute_plan(self.db,'new',api,prepare_plan(self.db,'new',api,{}))
+        self.db.import_tracks('new',[raw(),raw(ID2)])
+        execute_plan(self.db,'new',api,prepare_plan(self.db,'new',api,{}))
+        self.assertEqual(len(api.lists),1)
+        self.assertEqual(api.lists['p1']['name'],'Minha seleção')
+        self.assertEqual(set(api.items['p1']),{'spotify:track:'+ID1,'spotify:track:'+ID2})
+        self.assertEqual(len(api.items['p1']),2)
     def test_prepare_never_writes_and_repeat_never_duplicates(self):
         api=FakeSpotify()
         plan=prepare_plan(self.db,'a',api,{})
@@ -111,7 +163,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(api.items['p1']),206)
         self.assertEqual([len(b['uris']) for p,b in api.writes],[100,100,5])
     def test_candidate_ambiguity_stays_unknown(self):
-        enricher=Enricher(self.db)
+        enricher=Enricher(self.db,complements=False)
         candidate={'id':'x','title':'Song','artist-credit':[{'artist':{'name':'Artist'}}]}
         with patch.object(enricher,'mb',return_value={'recordings':[candidate,candidate]}):
             self.assertEqual(enricher.enrich(record(raw()))['genres'],[])
@@ -123,6 +175,18 @@ class Tests(unittest.TestCase):
             with self.assertRaises(RemoteError): api.pages('/me/tracks')
 
 class HTTPTests(unittest.TestCase):
+    def test_startup_empty_and_samples_disabled(self):
+        self.assertEqual(self.state['tracks'],[])
+        self.assertEqual(self.state['playlists'],[])
+        self.assertEqual(self.state['rules'],[])
+        self.assertFalse(self.state['sample_available'])
+        self.assertEqual(self.post('demo',{})[0],400)
+        self.assertEqual(self.post('pilot-review',{})[0],400)
+        self.assertEqual(self.post('rules',{'rules':[]})[0],200)
+        with urllib.request.urlopen(f'http://127.0.0.1:{self.port}/api/state') as response:
+            state=json.load(response)
+        self.assertEqual(state['tracks'],[])
+        self.assertEqual(state['playlists'],[])
     def setUp(self):
         import server
         self.server=server
@@ -148,11 +212,40 @@ class HTTPTests(unittest.TestCase):
         request=urllib.request.Request(f'http://127.0.0.1:{self.port}/api/'+path,data=json.dumps(data).encode(),headers=headers)
         try:
             with urllib.request.urlopen(request) as r:return r.status,json.load(r)
-        except urllib.error.HTTPError as e:return e.code,json.load(e)
+        except urllib.error.HTTPError as e:
+            with e:return e.code,json.load(e)
     def test_origin_csrf_and_demo_write_block(self):
         self.assertEqual(self.post('plan',{},csrf=False)[0],403)
         self.assertEqual(self.post('plan',{},origin=False)[0],403)
         self.assertEqual(self.post('plan',{})[0],400)
+    def test_rules_invalidate_preview_and_persist(self):
+        self.session['plan']={'id':'old'}
+        rules=[{'name':'POP','genres':['Pop'],'languages':[],'artists':[]}]
+        rules[0]['name']='Meu Pop'
+        status,result=self.post('rules',{'rules':rules})
+        self.assertEqual(status,200,result)
+        self.assertNotIn('plan',self.session)
+        self.assertEqual(self.server.STORE.rules(self.session['account'])[0]['name'],'Meu Pop')
+
+    def test_client_id_persists_without_tokens(self):
+        path=Path(self.tmp.name)/'config.json'
+        with patch.object(self.server,'CONFIG_PATH',path),patch.object(self.server,'CLIENT_ID',''):
+            self.assertEqual(self.post('config',{'client_id':'a'*32})[0],200)
+            self.assertEqual(json.loads(path.read_text()),{'client_id':'a'*32})
+            self.assertEqual(self.server.load_client_id(),'a'*32)
+
+    def test_first_login_keeps_rules_but_not_personal_tracks(self):
+        import time
+        rules=[{'name':'POP','genres':['Pop'],'languages':[],'artists':[]}]
+        rules[0]['name']='Minha seleção'
+        self.assertEqual(self.post('rules',{'rules':rules})[0],200)
+        self.session['oauth']={'state':'test-state','verifier':'test-verifier','expires':time.time()+60}
+        request=urllib.request.Request(f'http://127.0.0.1:{self.port}/callback?state=test-state&code=test-code',headers={'Cookie':self.cookie})
+        with patch.object(self.server,'request_json',return_value={'access_token':'fake','refresh_token':'fake','expires_in':3600}),patch.object(self.server.Spotify,'call',return_value={'id':'real-account'}):
+            with urllib.request.urlopen(request) as response:
+                self.assertEqual(response.status,200)
+        self.assertEqual(self.server.STORE.rules('real-account')[0]['name'],'Minha seleção')
+        self.assertEqual(self.server.STORE.tracks('real-account'),[])
     def test_confirmation_expiry_staleness_and_replay(self):
         import time
         self.session['token']={'access_token':'fake'}

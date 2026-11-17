@@ -6,7 +6,7 @@
 flowchart LR
   A[Spotify OAuth PKCE] --> B[Importar curtidas com paginação]
   B --> C[Biblioteca por conta]
-  C --> D[Consultar MusicBrainz e Wikidata]
+  C --> D[Classificar com Ollama ou consultar fontes]
   D --> E[Sugestões e fontes]
   E --> F[Prévia editável]
   G[Preferências salvas] --> F
@@ -19,7 +19,7 @@ flowchart LR
 
 1. **Entrada:** todas as páginas de curtidas são carregadas antes de alterar a biblioteca local. Faixas removidas da biblioteca ficam inativas; suas correções continuam armazenadas.
 2. **Identidade:** ID/URI Spotify é a chave da faixa por conta. ISRC, quando presente, auxilia a consulta externa. Título e artista são usados como alternativa conservadora. Candidatos ambíguos não são escolhidos automaticamente.
-3. **Enriquecimento:** consulta incremental com cache e intervalo. Gêneros e idiomas podem continuar vazios. A faixa permanece disponível para edição manual. Não há IA.
+3. **Enriquecimento:** consulta incremental com cache e intervalo. Gêneros e idiomas podem continuar vazios. A faixa permanece disponível para edição manual. Ollama local oferece sugestões opcionais de IA; consulte CLASSIFICACAO.md.
 4. **Sugestão:** considera as categorias escolhidas. Uma preferência salva substitui os destinos sugeridos para aquela faixa. Exclusão do projeto tem prioridade. Gênero, idioma e destino são armazenados separadamente.
 5. **Prévia:** usuário pode corrigir cada campo, marcar vários destinos ou deixar fora. Falta de gênero não impede um destino manual. Faixas sem destino ficam fora do conjunto a adicionar.
 6. **Plano de gravação:** usuário seleciona playlists existentes próprias ou criação privada. O plano contém IDs, URIs, faixas e diferenças em relação ao Spotify. Alterações posteriores invalidam a prévia. Confirmação é única e expira.
@@ -40,4 +40,9 @@ O piloto local e as contas Spotify são separados. Importar a revisão pessoal e
 
 ## Fora desta entrega
 
-Hospedagem pública, abertura a usuários não autorizados pelo Spotify, remoções automáticas, análise de áudio e IA. O projeto inclui a base de isolamento por conta, mas a implantação multiusuário requer infraestrutura e revisão de permissões antes de publicação.
+Hospedagem pública, abertura a usuários não autorizados pelo Spotify, remoções automáticas, análise de áudio. O projeto inclui a base de isolamento por conta, mas a implantação multiusuário requer infraestrutura e revisão de permissões antes de publicação.
+
+
+## Ollama, páginas e progresso
+
+Last.fm foi substituído por Ollama local. A biblioteca tem paginação e a classificação mostra faixa atual, log e estimativa adaptativa de tempo. Consulte [CLASSIFICACAO.md](CLASSIFICACAO.md) para configurar e conhecer os limites.

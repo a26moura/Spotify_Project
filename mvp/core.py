@@ -1,5 +1,6 @@
 """Rules and durable, account-scoped state. No Spotify writes in this module."""
 import json
+import hashlib
 from contextlib import contextmanager
 import re
 import sqlite3
@@ -7,6 +8,7 @@ import unicodedata
 from pathlib import Path
 
 DEFAULT_PLAYLISTS = ['POP', 'Sertanejo', 'Reggaeton', 'Espanhol', 'Frances', 'Trap', 'Rock', 'Funk']
+EXTRA_RULES = [{'name':n,'genres':[n],'languages':[],'artists':[]} for n in ['Eletrônica','Hip-Hop/Rap','Metal']]
 
 def norm(value):
     return ''.join(c for c in unicodedata.normalize('NFKD', value.casefold()) if not unicodedata.combining(c)).strip()
@@ -22,16 +24,104 @@ def broad(label):
                         (['trap'], 'Trap')]:
         if any(x in n for x in terms): return [name]
     result = []
+    if any(x in n for x in ['electronic', 'eletron', 'electro ', 'house', 'techno', 'dubstep', 'drum and bass', 'trance', 'edm']) or n == 'electro': result.append('Eletrônica')
+    if any(x in n for x in ['hip hop', 'hip-hop', 'hiphop']) or n in {'rap', 'gangsta rap', 'southern rap', 'dirty south', 'hip-hop/rap'}: result.append('Hip-Hop/Rap')
+    if 'metal' in n: result.append('Metal')
     if 'rock' in n or 'punk' in n: result.append('Rock')
     if 'pop' in n: result.append('Pop')
     return result or [label]
 
-def suggest(track, names):
+def default_rule(name):
+    language = norm(name) in {'espanhol', 'frances', 'ingles', 'portugues', 'japones', 'coreano'}
+    return {'name': name, 'genres': [] if language else [name],
+            'languages': [name] if language else [], 'artists': []}
+
+
+def matches_rule(track, rule):
+    # OR within each field, AND between fields. Empty rules never match everything.
+    metadata = track.get('review') or track
+    criteria = []
+    for key in ('genres', 'languages', 'artists'):
+        wanted = {norm(x) for x in rule.get(key, [])}
+        if not wanted:
+            continue
+        values = track.get(key, []) if key == 'artists' else metadata.get(key, [])
+        if key == 'genres':
+            # A bare "funk" from MusicBrainz/Deezer/Wikidata is American funk. Only your review or the
+            # AI (whose list separates Funk from Funk Internacional) use "Funk" for Brazilian funk.
+            american = metadata is track and infer_origin(track, 'genre') != 'ia'
+            values = ['Funk Internacional' if american and norm(x) == 'funk' else x for x in values]
+        actual = {norm(x) for x in values}
+        if key == 'genres':
+            actual.update(norm(label) for value in values for label in broad(value))
+        criteria.append(bool(wanted & actual))
+    return bool(criteria) and all(criteria)
+
+
+# Ranks are compared within one field. Genre: faixa > album > artista > ia. Language: faixa > letra > ia.
+ORIGIN_RANK = {'faixa': 4, 'album': 3, 'letra': 3, 'artista': 2, 'ia': 1}
+
+def infer_origin(track, field):
+    """Where a track's genres/languages came from: faixa, album, letra, artista, ia or None (empty)."""
+    key = 'genres' if field == 'genre' else 'languages'
+    if not track.get(key): return None
+    if track.get(field + '_origin') in ORIGIN_RANK: return track[field + '_origin']
+    if str(track.get('classification_source') or '').startswith('Ollama'): return 'ia'
+    if field == 'genre' and track.get('artist_genres'): return 'artista'
+    return 'faixa'
+
+
+def needs_complements(track):
+    """True when Deezer/LRCLIB were not yet tried and could still improve genre or language."""
+    if track.get('complements_checked') or track.get('review'): return False
+    return (ORIGIN_RANK.get(infer_origin(track, 'genre'), 0) < ORIGIN_RANK['album'] or
+            ORIGIN_RANK.get(infer_origin(track, 'language'), 0) < ORIGIN_RANK['letra'])
+
+
+# Bump when the routing prompt or evidence rules change, so old model decisions are redone.
+ROUTING_VERSION = 2
+
+def routing_key(track, rules):
+    data={k:track.get(k,[]) for k in ('title','artists','genres','languages','source_labels')}
+    return hashlib.sha256(json.dumps([ROUTING_VERSION,data,rules],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+
+
+def has_evidence(track):
+    """The model may only route tracks that already have a genre or language from some source."""
+    return bool(track.get('genres') or track.get('languages'))
+
+
+def needs_routing(track, rules, model):
+    if track.get('review') or not has_evidence(track): return False
+    routing = track.get('routing') or {}
+    return routing.get('key') != routing_key(track, rules) or routing.get('model') != model
+
+
+def model_may_say_yes(track, rule):
+    """A 'yes' from the model counts only when the track has data for the playlist's explicit criteria:
+    a genre criterion needs a genre, a language criterion needs a language. Names are never evidence."""
+    if not has_evidence(track): return False
+    if rule.get('genres') and not track.get('genres'): return False
+    if rule.get('languages') and not track.get('languages'): return False
+    return True
+
+def suggest(track, names, rules=None):
     review = track.get('review')
     if review is not None:
-        return [] if review['exclude'] else [n for n in review['playlists'] if n in names]
-    lookup = {norm(n): n for n in names}
-    return list(dict.fromkeys(lookup[norm(x)] for x in track.get('genres', []) + track.get('languages', []) if norm(x) in lookup))
+        if review['exclude']:
+            return []
+        if not review.get('automatic', False):
+            return [n for n in review['playlists'] if n in names]
+    rules = rules if rules is not None else [default_rule(n) for n in names]
+    matched = [r['name'] for r in rules if r['name'] in names and matches_rule(track, r)]
+    if review is None and track.get('routing_required'):
+        # Your explicit criteria always count; the model can add playlists, gated by evidence.
+        routing=track.get('routing') or {}
+        if routing.get('key')!=routing_key(track,rules):return matched
+        by_name={r['name']:r for r in rules}
+        yes={d['playlist'] for d in routing.get('decisions',[]) if d['verdict']=='yes' and d['playlist'] in by_name and model_may_say_yes(track,by_name[d['playlist']])}
+        return [n for n in names if n in yes or n in matched]
+    return matched
 
 def record(raw):
     ident = raw.get('id') or track_id(raw.get('url', ''))
@@ -40,6 +130,7 @@ def record(raw):
     return {'id': ident, 'title': raw.get('name') or raw.get('title', ''), 'artists': artists,
             'uri': 'spotify:track:' + ident, 'url': 'https://open.spotify.com/track/' + ident,
             'isrc': raw.get('external_ids', {}).get('isrc'), 'genres': [], 'languages': [],
+            'duration_ms': raw.get('duration_ms'),
             'sources': [], 'lookup': 'pending', 'review': None, 'active': True,
             'playable': raw.get('is_playable', True) and not raw.get('is_local', False)}
 
@@ -51,7 +142,18 @@ class Store:
             db.executescript('''CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, names TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS tracks(account TEXT, id TEXT, data TEXT NOT NULL, PRIMARY KEY(account,id));
               CREATE TABLE IF NOT EXISTS targets(account TEXT,name TEXT,playlist TEXT NOT NULL,PRIMARY KEY(account,name));
-              CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY, data TEXT NOT NULL, expires REAL NOT NULL);''')
+              CREATE TABLE IF NOT EXISTS rules(account TEXT PRIMARY KEY, data TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY, data TEXT NOT NULL, expires REAL NOT NULL);
+              CREATE TABLE IF NOT EXISTS spotify_library(account TEXT PRIMARY KEY, data TEXT NOT NULL);''')
+
+    def spotify_library(self, account):
+        with self.connect() as db:
+            row=db.execute('SELECT data FROM spotify_library WHERE account=?',(account,)).fetchone()
+        return json.loads(row[0]) if row else {'playlists':[], 'synced_at':None}
+
+    def save_spotify_library(self, account, snapshot):
+        with self.connect() as db:
+            db.execute('INSERT OR REPLACE INTO spotify_library VALUES (?,?)',(account,json.dumps(snapshot)))
 
     @contextmanager
     def connect(self):
@@ -64,12 +166,12 @@ class Store:
 
     def names(self, account):
         with self.connect() as db:
-            db.execute('INSERT OR IGNORE INTO accounts VALUES (?,?)', (account, json.dumps(DEFAULT_PLAYLISTS)))
+            db.execute('INSERT OR IGNORE INTO accounts VALUES (?,?)', (account, '[]'))
             return json.loads(db.execute('SELECT names FROM accounts WHERE id=?', (account,)).fetchone()[0])
 
     def set_names(self, account, names):
-        if not isinstance(names, list) or not 1 <= len(names) <= 30 or any(not isinstance(n,str) or not n.strip() or len(n)>80 for n in names):
-            raise ValueError('Escolha entre 1 e 30 nomes de playlists, com até 80 caracteres.')
+        if not isinstance(names, list) or not 0 <= len(names) <= 30 or any(not isinstance(n,str) or not n.strip() or len(n)>80 for n in names):
+            raise ValueError('Escolha até 30 nomes de playlists, com até 80 caracteres.')
         names = [n.strip() for n in names]
         if len({norm(n) for n in names}) != len(names): raise ValueError('Os nomes não podem se repetir.')
         removed = set(self.names(account)) - set(names)
@@ -77,6 +179,58 @@ class Store:
             raise ValueError('Há revisões usando uma playlist removida. Ajuste essas músicas primeiro.')
         with self.connect() as db:
             db.execute('UPDATE accounts SET names=? WHERE id=?', (json.dumps(names), account))
+
+    def rules(self, account):
+        names = self.names(account)
+        with self.connect() as db:
+            row = db.execute('SELECT data FROM rules WHERE account=?', (account,)).fetchone()
+        saved = {r['name']: r for r in json.loads(row[0])} if row else {}
+        return [saved.get(n, default_rule(n)) for n in names]
+
+    def set_rules(self, account, rules):
+        if not isinstance(rules, list) or not 0 <= len(rules) <= 30:
+            raise ValueError('Defina até 30 playlists.')
+        old_names = self.names(account)
+        clean, renames, originals = [], {}, set()
+        for rule in rules:
+            if not isinstance(rule, dict): raise ValueError('Regra inválida.')
+            name = rule.get('name')
+            if not isinstance(name, str) or not name.strip() or len(name) > 80:
+                raise ValueError('Cada playlist precisa de um nome de até 80 caracteres.')
+            item = {'name': name.strip()}
+            description=rule.get('description','')
+            if not isinstance(description,str) or len(description)>1000:raise ValueError('Descrição da playlist inválida (máximo 1000 caracteres).')
+            if description.strip():item['description']=description.strip()
+            for key in ('genres', 'languages', 'artists'):
+                values = rule.get(key, [])
+                if not isinstance(values, list) or len(values) > 30 or any(not isinstance(v, str) or not v.strip() or len(v) > 100 for v in values):
+                    raise ValueError('Critérios inválidos: use até 30 valores por campo.')
+                item[key] = list(dict.fromkeys(v.strip() for v in values))
+            original = rule.get('previous_name', item['name'] if item['name'] in old_names else None)
+            if original is not None:
+                if not isinstance(original, str) or original not in old_names or original in originals:
+                    raise ValueError('Origem da playlist inválida ou repetida.')
+                originals.add(original)
+                renames[original] = item['name']
+            clean.append(item)
+        names = [r['name'] for r in clean]
+        if len({norm(n) for n in names}) != len(names): raise ValueError('Os nomes não podem se repetir.')
+        tracks = self.tracks(account)
+        removed = set(old_names) - originals
+        if any(removed.intersection((t.get('review') or {}).get('playlists', [])) for t in tracks):
+            raise ValueError('Há escolhas manuais nesta playlist. Retire esses destinos antes de removê-la.')
+        targets = self.targets(account)
+        with self.connect() as db:
+            db.execute('UPDATE accounts SET names=? WHERE id=?', (json.dumps(names), account))
+            db.execute('INSERT OR REPLACE INTO rules VALUES (?,?)', (account, json.dumps(clean)))
+            db.execute('DELETE FROM targets WHERE account=?', (account,))
+            for old, ident in targets.items():
+                if old in renames:
+                    db.execute('INSERT INTO targets VALUES (?,?,?)', (account, renames[old], ident))
+            for t in tracks:
+                if t.get('review'):
+                    t['review']['playlists'] = [renames[n] for n in t['review']['playlists'] if n in renames]
+                    db.execute('UPDATE tracks SET data=? WHERE account=? AND id=?', (json.dumps(t), account, t['id']))
 
     def tracks(self, account, active=False):
         with self.connect() as db:
@@ -95,7 +249,7 @@ class Store:
             if not t: continue
             if t['id'] in old:
                 previous = old[t['id']]
-                for key in ['review', 'genres', 'languages', 'sources', 'lookup', 'lookup_note']:
+                for key in ['review', 'genres', 'languages', 'sources', 'lookup', 'lookup_note', 'artist_genres', 'classification_source', 'classification_level', 'source_labels', 'labels_collected', 'routing_required', 'routing', 'genre_origin', 'language_origin', 'artist_checked', 'ai_checked', 'complements_checked']:
                     if key in previous: t[key] = previous[key]
             found[t['id']] = t
         # A full successful import is committed atomically. An API failure never empties the library.
@@ -119,6 +273,8 @@ class Store:
             if not isinstance(data.get(key),list) or len(data[key])>20 or any(not isinstance(x,str) or len(x)>100 for x in data[key]): raise ValueError('Gênero ou idioma inválido.')
         t = rows[ident]
         t['review'] = {k: data[k] for k in ['playlists','exclude','genres','languages']}
+        if not isinstance(data.get('automatic', False), bool): raise ValueError('Modo de organização inválido.')
+        t['review']['automatic'] = data.get('automatic', False)
         t['review']['playlists'] = list(dict.fromkeys(destinations))
         self.put(account,t)
 
@@ -130,6 +286,11 @@ class Store:
 
     def seed(self, account, directory, full=False, apply_review=True):
         directory = Path(directory)
+        if not all((directory / name).is_file() for name in ['revisao-consolidada.json', 'playlists-definidas.json', 'fontes-amostra.json']):
+            self.names(account)
+            return 0
+        if full and not (directory / 'musicas-curtidas.json').is_file():
+            raise ValueError('A exportação pessoal não está disponível nesta instalação. Conecte o Spotify para importar suas curtidas.')
         reviews = json.loads((directory/'revisao-consolidada.json').read_text(encoding='utf-8-sig'))['tracks']
         assignments = json.loads((directory/'playlists-definidas.json').read_text(encoding='utf-8-sig'))['sample_assignments']
         proposals = {track_id(t['spotify_url']):t for t in assignments}
@@ -152,9 +313,9 @@ class Store:
             self.put(account,t)
         return count
 
-def desired_sets(tracks, names):
+def desired_sets(tracks, names, rules=None):
     result = {n: set() for n in names}
     for t in tracks:
         if not t['active'] or not t.get('playable',True): continue
-        for name in suggest(t,names): result[name].add(t['uri'])
+        for name in suggest(t,names,rules): result[name].add(t['uri'])
     return result

@@ -13,7 +13,7 @@ Aplicativo local para importar curtidas, consultar gêneros e idiomas, editar de
 
 Clique em **Conectar Spotify**. A tela explica como criar um aplicativo em https://developer.spotify.com/dashboard e configurar o retorno **http://127.0.0.1:8765/callback**. Use exatamente esse endereço, não `localhost`.
 
-Informe somente o **Client ID**. Não é necessário Client Secret. O Client ID informado na tela vale pela execução atual; alternativamente, configure a variável de ambiente `SPOTIFY_CLIENT_ID` antes de iniciar. A senha é informada somente na página oficial do Spotify. O fluxo utiliza Authorization Code com PKCE e validação de state.
+Informe somente o **Client ID**. Não é necessário Client Secret. O Client ID informado na tela é salvo em `runtime/config.json` (não é um segredo). Alternativamente, configure a variável de ambiente `SPOTIFY_CLIENT_ID` antes de iniciar. A senha é informada somente na página oficial do Spotify. O fluxo utiliza Authorization Code com PKCE e validação de state.
 
 O responsável pelo app precisa de Spotify Premium no modo de desenvolvimento. Contas de teste precisam estar autorizadas no painel. A disponibilidade de cadastro e a aprovação de acesso público são controladas pelo Spotify.
 
@@ -47,9 +47,9 @@ Esta é uma base para evolução multiusuário, **não uma implantação públic
 
 ## Fontes e limites
 
-MusicBrainz é consultado por ISRC quando disponível, ou título e artista. Apenas um candidato com título e artista compatíveis permite enriquecimento. Ambiguidade permanece explícita. Gêneros da gravação e idiomas das obras são apresentados como sugestões. Wikidata é consultado quando há vínculo direto no registro MusicBrainz. Cache de sete dias e espaçamento mínimo de 1,1 segundo entre consultas sem cache. Para uso continuado, configure `MUSICBRAINZ_USER_AGENT` com identificação e contato do aplicativo.
+MusicBrainz é consultado por ISRC quando disponível, ou título e artista. Apenas um candidato com título e artista compatíveis permite enriquecimento. Ambiguidade permanece explícita. Gêneros da gravação e idiomas das obras são apresentados como sugestões. Wikidata é consultado quando há vínculo direto no registro MusicBrainz. Deezer (gênero do álbum pelo ISRC) e LRCLIB (idioma detectado na letra, sem guardar a letra) completam o que faltar; ver CLASSIFICACAO.md. Cache de sete dias (30 dias para os resultados de Deezer/LRCLIB) e espaçamento mínimo por serviço entre consultas sem cache (1,1 s no MusicBrainz). Para uso continuado, configure `MUSICBRAINZ_USER_AGENT` com identificação e contato do aplicativo.
 
-As 40 faixas reutilizam a pesquisa já realizada, preservando a proveniência. As sugestões não substituem escolhas humanas. Não há IA, classificação por áudio ou inferência de idioma a partir do título. As tags do MusicBrainz usadas neste piloto são CC BY-NC-SA 3.0; dados estruturados Wikidata são CC0. A abertura comercial depende de avaliação própria.
+As 40 faixas reutilizam a pesquisa já realizada, preservando a proveniência. As sugestões não substituem escolhas humanas. Há sugestões opcionais de IA via Ollama local; não há análise de áudio. Consulte CLASSIFICACAO.md. As tags do MusicBrainz usadas neste piloto são CC BY-NC-SA 3.0; dados estruturados Wikidata são CC0. A abertura comercial depende de avaliação própria.
 
 - [Spotify: migração de endpoints de fevereiro de 2026](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide)
 - [Spotify: PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow)
@@ -60,9 +60,37 @@ As 40 faixas reutilizam a pesquisa já realizada, preservando a proveniência. A
 ## Estrutura e testes
 
 - `core.py`: regras, banco por conta e preservação de revisões.
-- `providers.py`: Spotify, enriquecimento, prévia e gravação.
+- `providers.py`: Spotify, enriquecimento (MusicBrainz, Wikidata, Deezer, LRCLIB), prévia e gravação.
+- `lyrics_language.py`: detecção local de idioma pela letra, sem IA.
 - `server.py`: servidor local, sessões e OAuth.
 - `static/`: interface editável.
 - `tests/test_mvp.py`: testes de importação, isolamento, exclusão, deduplicação, falhas parciais, confirmação e segurança das requisições.
 
 Execute `python -m unittest discover -s tests -v` nesta pasta. Os testes usam Spotify simulado e banco temporário. Testes aprovados não comprovam acesso real da conta à API: login e gravação reais dependem do cadastro do aplicativo e da confirmação do usuário.
+
+## Organizar automaticamente (13/11/2026)
+
+> Atualização de 16/11/2026: o botão único descrito abaixo foi substituído por **1. Classificar músicas** e **2. Organizar nas playlists**. Veja [CLASSIFICACAO.md](CLASSIFICACAO.md).
+
+1. Abra `INICIAR.cmd`; o navegador abre automaticamente.
+2. Em **Escolher critérios**, dê um nome a cada playlist e defina gêneros, idiomas e/ou artistas. Separe valores com vírgulas. Dentro do mesmo campo vale OU; entre campos vale E. Exemplo: Pop + Espanhol. Artistas usam correspondência pelo nome completo, sem diferenciar acentos ou maiúsculas. Todos os campos vazios tornam a playlist manual.
+3. Conecte sua conta e clique em **Organizar curtidas automaticamente**. A biblioteca é importada, os metadados são consultados e os destinos são calculados pelas regras.
+4. Selecione criar playlists privadas ou reutilizar as suas. Confirme a prévia uma vez; o aplicativo cria e preenche todas as playlists correspondentes.
+5. Use o mesmo botão para importar novas curtidas e adicionar as ausentes.
+
+Escolhas manuais anteriores continuam prioritárias. Em Editar, marque **Distribuir automaticamente pelos critérios das playlists** para devolver uma faixa às regras. Gêneros e idiomas corrigidos serão usados nesse modo. Exclusões continuam prioritárias.
+
+Renomear uma regra mantém associações e o ID do destino existente. Isso não renomeia a playlist já criada no Spotify. Faixas sem metadados suficientes ou sem correspondência não recebem um destino inventado; ficam visíveis em Sem destino. A consulta pode levar minutos, tem cache e pode ser interrompida entre músicas. Uma falha interrompe o fluxo antes da confirmação de escrita.
+
+Os arquivos pessoais de `data/` são opcionais e ignorados pelo Git. Uma instalação sem eles abre vazia e permite conectar o Spotify normalmente. O teste da amostra pessoal é omitido quando esses arquivos não estão disponíveis; os demais testes não dependem deles.
+No primeiro login de uma conta, os critérios escolhidos no piloto são copiados; as músicas e revisões pessoais não são. Contas já configuradas recuperam seus próprios critérios.
+
+### Falhas temporárias das fontes
+
+Consultas de metadados fazem até três tentativas em erros de rede ou HTTP 429/500/502/503/504, com espera crescente e respeito a Retry-After. Se a fonte continuar indisponível, a consulta é pausada por pelo menos 60 segundos (ou o prazo maior informado pela fonte). Clique em Consultar gêneros e idiomas após esse prazo para retomar. As revisões e faixas pendentes são preservadas. Essa repetição aplica-se somente a leituras de metadados; gravações no Spotify nunca são repetidas automaticamente.
+
+
+
+## Ollama, páginas e progresso
+
+Last.fm foi substituído por Ollama local. A biblioteca tem paginação e a classificação mostra faixa atual, log e estimativa adaptativa de tempo. Consulte [CLASSIFICACAO.md](CLASSIFICACAO.md) para configurar e conhecer os limites.

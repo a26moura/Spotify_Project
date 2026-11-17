@@ -1,14 +1,16 @@
-# Verificação do MVP
+# Verificação — 13 de novembro de 2026
 
-Executada em 7 de novembro de 2026.
+22 testes automatizados aprovados com Python 3.14, bancos temporários e Spotify simulado.
 
-- 14 testes automatizados aprovados: importação e preservação de revisão, isolamento por conta, exclusão, destino vazio, validação de categorias, amostra pessoal, plano sem gravação, repetição sem duplicação, resposta perdida após adição, resposta perdida após criação, destinos repetidos, lotes de 100 com preservação de faixas existentes, candidatos ambíguos, paginação e relinking, proteção Origin/CSRF e confirmação única com expiração. Alguns testes cobrem mais de um cenário.
-- Consulta real ao MusicBrainz para La Bachata concluída. Foram retornadas sugestões de gêneros; o idioma ficou ausente nesta consulta e deve permanecer assim até revisão ou outra evidência.
-- Interface verificada no navegador local: carregamento de 40 faixas, 39 com destino, busca de Faded, abertura e salvamento da edição com Eletrônica como gênero e POP como destino, sem alterar a escolha original.
-- Sintaxe Python e JavaScript verificada.
+Cobertura: importação, isolamento por conta, preservação de revisões, exclusões, critérios combinados, renomeação e preservação de destinos, classificação automática usando metadados corrigidos, inicialização sem amostra pessoal, persistência do Client ID, invalidação da prévia, criação/preenchimento e atualização sem duplicações, falhas parciais e respostas perdidas, lotes de 100, paginação e relinking, Origin/CSRF e confirmação com validade e uso único.
 
-## Pendente
+A execução precisa de acesso normal aos diretórios temporários. O ambiente restrito de execução inicial impediu o SQLite de abri-los; a mesma suíte executada com acesso autorizado passou.
 
-Autenticação real, importação atual da biblioteca, leitura dos destinos e gravação real no Spotify. O usuário ainda não possui aplicativo cadastrado nem Client ID. Os testes de escrita usam um serviço simulado e não alteraram o Spotify.
+A integração real com a conta ainda depende do Client ID e do login oficial. Os testes não criaram playlists reais. Metadados incompletos continuam exigindo revisão; não foi medida uma nova taxa de classificação.
 
-Ainda não é uma implantação pública. A disponibilidade de acesso depende do Spotify e das permissões das fontes.
+Interface verificada no navegador: carregamento das 40 faixas, salvamento e renomeação de regras preservando associações, busca e mudança de uma faixa para distribuição automática. Teste adicional de callback OAuth simulado confirma que o primeiro login preserva critérios sem copiar faixas pessoais.
+
+## Correção HTTP 503 — 15/11/2026
+
+29 testes aprovados. Novos cenários: recuperação de erros transitórios, cache após sucesso, limite de três tentativas, pausa por fonte após esgotamento, respeito a Retry-After (segundos/data), falhas permanentes sem repetição e garantia de não repetir gravações no Spotify. Consulta fictícia real ao MusicBrainz concluída com sucesso. A disponibilidade externa continua variável; não foi revalidada a classificação da biblioteca pessoal.
+
