@@ -7,6 +7,7 @@ Escolha de uma música: guardada como diferença em relação ao conteúdo atual
 ({'add': [chaves], 'remove': [chaves]}). Assim uma nova sincronização não apaga o que você
 decidiu e o que você não tocou continua como está no Spotify.
 """
+import html
 import json
 import secrets
 import time
@@ -44,14 +45,15 @@ def sync_profiles(store, account, playlists):
     description you did not edit follows the Spotify. A playlist gone from the Spotify is marked
     missing and leaves the game (its choices stay, but are not written)."""
     current = {p['key']: p for p in profiles(store, account)}
+    by_spotify = {p['spotify_id']: p for p in current.values() if p.get('spotify_id')}
     seen = set()
     position = max([p.get('position', 0) for p in current.values()] or [0])
     with store.connect() as db:
         for playlist in playlists:
             key = playlist['id']; seen.add(key)
-            name = (playlist.get('name') or 'Playlist')[:NAME_MAX]
-            description = (playlist.get('description') or '')[:DESCRIPTION_MAX]
-            p = current.get(key)
+            name = html.unescape(playlist.get('name') or 'Playlist')[:NAME_MAX]
+            description = html.unescape(playlist.get('description') or '')[:DESCRIPTION_MAX]
+            p = by_spotify.get(key)
             if p is None:
                 position += 1
                 p = {'key': key, 'spotify_id': key, 'name': name, 'description': description,
@@ -63,7 +65,7 @@ def sync_profiles(store, account, playlists):
                      snapshot_id=playlist.get('snapshot_id'))
             _save(db, account, p)
         for key, p in current.items():
-            if p.get('spotify_id') and key not in seen and not p.get('missing'):
+            if p.get('spotify_id') and p['spotify_id'] not in seen and not p.get('missing'):
                 p.update(missing=True, active=False)
                 _save(db, account, p)
 
@@ -115,7 +117,8 @@ def create_profile(store, account, fields):
 def delete_profile(store, account, key):
     """Only playlists created in the app (not yet on the Spotify) can be deleted. Choices that
     added music to it are dropped too."""
-    if not key.startswith('new:'): raise ValueError('Só playlists novas, ainda não gravadas, podem ser apagadas.')
+    row = next((p for p in profiles(store, account) if p['key'] == key), None)
+    if not row or row.get('spotify_id'): raise ValueError('Só playlists novas, ainda não gravadas, podem ser apagadas.')
     with store.connect() as db:
         db.execute('DELETE FROM profiles WHERE account=? AND key=?', (account, key))
         for track, data in db.execute('SELECT track,data FROM decisions WHERE account=?', (account,)).fetchall():
@@ -128,11 +131,35 @@ def delete_profile(store, account, key):
 # ---------- escolhas das músicas ----------
 
 def membership(store, account):
-    """Track ids currently in each of your Spotify playlists (from the last sync)."""
-    result = {}
-    for playlist in store.spotify_library(account).get('playlists', []):
-        result[playlist['id']] = {t['id'] for t in playlist.get('tracks', []) if t.get('id')}
-    return result
+    """Track ids currently in each playlist profile (by profile key), from the last sync."""
+    lists = {pl['id']: {t['id'] for t in pl.get('tracks', []) if t.get('id')} for pl in store.spotify_library(account).get('playlists', [])}
+    return {p['key']: lists.get(p['spotify_id'], set()) for p in profiles(store, account) if p.get('spotify_id')}
+
+
+def apply_published(store, account, key, spotify_id, name, description, added, removed):
+    """After a successful write: the local copy follows the Spotify and the applied choices are
+    cleared (the tracks stay decided)."""
+    rows = {p['key']: p for p in profiles(store, account)}
+    p = rows[key]
+    p.update(spotify_id=spotify_id, name=name, description=description, spotify_name=name, spotify_description=description, missing=False)
+    library = store.spotify_library(account)
+    entry = next((pl for pl in library.get('playlists', []) if pl['id'] == spotify_id), None)
+    if entry is None:
+        entry = {'id': spotify_id, 'name': name, 'description': description, 'owned': True, 'tracks': [], 'unavailable': False}
+        library.setdefault('playlists', []).append(entry)
+    gone = set(removed)
+    entry['tracks'] = [t for t in entry['tracks'] if t.get('id') not in gone]
+    have = {t.get('id') for t in entry['tracks']}
+    entry['tracks'] += [{'id': t, 'uri': 'spotify:track:' + t} for t in added if t not in have]
+    entry.update(name=name, description=description)
+    store.save_spotify_library(account, library)
+    with store.connect() as db:
+        _save(db, account, p)
+        for track, data in db.execute('SELECT track,data FROM decisions WHERE account=?', (account,)).fetchall():
+            d = json.loads(data)
+            if key in d['add'] or key in d['remove']:
+                d['add'] = [k for k in d['add'] if k != key]; d['remove'] = [k for k in d['remove'] if k != key]
+                db.execute('UPDATE decisions SET data=? WHERE account=? AND track=?', (json.dumps(d), account, track))
 
 
 def decisions(store, account):
@@ -232,7 +259,7 @@ def overview(store, account):
     rows = []
     for p in profiles(store, account):
         key = p['key']
-        now = current.get(key, set()) & active_ids if p.get('spotify_id') else set()
+        now = current.get(key, set()) & active_ids
         after = {t for t in active_ids if key in marks(t, done.get(t), current, [key])} if not p.get('missing') else now
         rows.append(dict(p, count=len(now), count_after=len(after)))
     genres, languages = {}, {}

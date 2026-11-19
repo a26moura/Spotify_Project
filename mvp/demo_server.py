@@ -34,6 +34,31 @@ def demo_session():
     s.update(account=A, display_name='Conta de demonstração', token={'access_token': 'fake'}, synced=True)
     return key, s
 server.new_session = demo_session
+
+
+class DemoSpotify:
+    """Spotify simulado em memória: a prévia e a gravação funcionam sem tocar em conta real."""
+    lists, items = {}, {}
+    def __init__(self, *args): pass
+    def playlists(self): return [dict(p) for p in DemoSpotify.lists.values()]
+    def contents(self, ident): return set(DemoSpotify.items[ident])
+    def call(self, path, method='GET', body=None):
+        print('[Spotify simulado]', method, path, body, flush=True)
+        if path == '/me/playlists':
+            ident = 'demo' + str(len(DemoSpotify.lists))
+            DemoSpotify.lists[ident] = {'id': ident, 'name': body['name'], 'description': body['description']}
+            DemoSpotify.items[ident] = []
+            return {'id': ident}
+        ident = path.split('/')[2]
+        if method == 'PUT': DemoSpotify.lists[ident].update(body)
+        elif method == 'POST': DemoSpotify.items[ident] += body['uris']
+        elif method == 'DELETE':
+            gone = {i['uri'] for i in body['items']}
+            DemoSpotify.items[ident] = [u for u in DemoSpotify.items[ident] if u not in gone]
+        return {}
+DemoSpotify.items = {pl['id']: ['spotify:track:' + t['id'] for t in pl['tracks']] for pl in lists}
+DemoSpotify.lists = {pl['id']: {'id': pl['id'], 'name': pl['name'], 'description': pl['description']} for pl in lists}
+server.Handler.api = lambda self, s: DemoSpotify()
 server.CLIENT_ID = 'x' * 32
 http = server.ThreadingHTTPServer(('127.0.0.1', 8799), server.Handler)
 print('demo em http://127.0.0.1:8799', flush=True)

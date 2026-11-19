@@ -92,8 +92,20 @@
   </section>
 
   <section id="screen-preview" class="screen hidden" aria-labelledby="preview-title">
-    <h1 id="preview-title">Prévia</h1>
-    <p class="muted">Em construção (etapa 5).</p>
+    <div class="screen-head">
+      <div>
+        <h1 id="preview-title">Prévia final</h1>
+        <p class="muted">Lida agora do seu Spotify. Confira o que entra, o que sai e o que muda em cada playlist. Nada foi gravado ainda.</p>
+      </div>
+      <div class="head-actions">
+        <button id="back-game" class="secondary">← Voltar ao jogo</button>
+        <button id="refresh-preview" class="secondary">Ler de novo</button>
+        <button id="publish" class="primary">Gravar no Spotify</button>
+      </div>
+    </div>
+    <div id="preview-totals" class="summary"></div>
+    <div id="preview-list" class="plans"></div>
+    <div id="publish-results" class="results hidden"></div>
   </section>
 </main>
 

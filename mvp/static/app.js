@@ -50,6 +50,7 @@ function go(name) {
   render();
   if (name === 'game') loadCard().catch(e => notify(e.message, true));
   if (name === 'playlists') refresh().catch(e => notify(e.message, true));
+  if (name === 'preview') loadPlan();
 }
 for (const b of document.querySelectorAll('[data-go]')) b.onclick = () => go(b.dataset.go);
 
@@ -364,6 +365,55 @@ document.addEventListener('keydown', e => {
   else if (e.key === ' ') { e.preventDefault(); playPause(); }
   else if (e.key.toLowerCase() === 's') { e.preventDefault(); $('skip').click(); }
 });
+
+// ---------- prévia final e gravação ----------
+let plan = null;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const STATUS = {create: 'Nova · será criada (privada)', update: 'Vai mudar', same: 'Sem mudanças', skip: 'Nova, sem músicas · não será criada'};
+const songList = (list, cls) => list.length ? `<ul class="songs ${cls}">${list.map(t => `<li>${esc(t.title)} <span class="muted">${esc(t.artists.join(', '))}</span></li>`).join('')}</ul>` : '';
+async function loadPlan() {
+  $('publish').disabled = true; plan = null;
+  $('publish-results').classList.add('hidden');
+  $('preview-totals').textContent = 'Lendo suas playlists no Spotify…'; $('preview-list').innerHTML = '';
+  try {
+    plan = await api('publish-preview', {});
+    const t = plan.totals;
+    $('preview-totals').innerHTML = t.playlists
+      ? `<span><b>${plural(t.playlists, 'playlist vai', 'playlists vão')}</b> mudar</span><span><b>${plural(t.create, 'nova', 'novas')}</b></span><span class="plus"><b>+${t.add}</b> entram</span><span class="minus"><b>−${t.remove}</b> saem</span>`
+      : '<span>Nada para gravar: o Spotify já está igual às suas escolhas.</span>';
+    $('preview-list').innerHTML = plan.items.map(i => `
+      <article class="plan ${i.action}">
+        <header><h2>${esc(i.rename ? i.rename.to : i.name)}</h2><span class="badge">${STATUS[i.action]}</span></header>
+        ${i.rename ? `<p class="change">Nome: <s>${esc(i.rename.from)}</s> → ${esc(i.rename.to)}</p>` : ''}
+        ${i.describe ? `<p class="change">Descrição: ${i.describe.from ? `<s>${esc(i.describe.from)}</s> → ` : ''}${esc(i.describe.to) || '<i>vazia</i>'}</p>` : ''}
+        <p class="counts">${i.before} → <b>${i.after}</b> músicas ${i.add.length ? `<span class="plus">+${i.add.length}</span>` : ''} ${i.remove.length ? `<span class="minus">−${i.remove.length}</span>` : ''}</p>
+        ${i.add.length || i.remove.length ? `<details${i.add.length + i.remove.length <= 6 ? ' open' : ''}><summary>Ver músicas</summary>${songList(i.add, 'plus')}${songList(i.remove, 'minus')}</details>` : ''}
+      </article>`).join('');
+    $('publish').disabled = !t.playlists;
+  } catch (e) { $('preview-totals').textContent = ''; notify(e.message, true); }
+}
+$('refresh-preview').onclick = () => action($('refresh-preview'), loadPlan);
+$('back-game').onclick = () => go('game');
+$('publish').onclick = () => {
+  if (!plan) return;
+  const t = plan.totals;
+  modal('Gravar no Spotify?', `<p>Vou alterar <b>${plural(t.playlists, 'playlist', 'playlists')}</b>${t.create ? ` (${plural(t.create, 'nova', 'novas')}, criada${t.create === 1 ? '' : 's'} como privada${t.create === 1 ? '' : 's'})` : ''}: <b>+${t.add}</b> músicas entram e <b>−${t.remove}</b> saem.</p>
+    ${t.remove ? '<p>As remoções não têm desfazer automático. Se quiser uma música de volta, coloque-a de novo pelo jogo.</p>' : ''}
+    <p class="muted">Se alguma playlist tiver mudado no Spotify depois desta prévia, ela não é alterada e a gravação para ali.</p>
+    <div class="dialog-actions"><button id="cancel-publish" class="secondary">Cancelar</button><button id="confirm-publish" class="primary">Gravar agora</button></div>`);
+  $('cancel-publish').onclick = () => $('dialog').close();
+  $('confirm-publish').onclick = () => action($('confirm-publish'), async () => {
+    const r = await api('publish-execute', {id: plan.id});
+    $('dialog').close(); plan = null; $('publish').disabled = true;
+    const failed = r.results.find(x => x.error);
+    $('preview-list').innerHTML = '';
+    $('preview-totals').textContent = failed ? '' : 'Gravação concluída. Use "Ler de novo" para conferir o Spotify.';
+    $('publish-results').innerHTML = `<h2>${failed ? 'Gravação interrompida' : 'Gravado no Spotify ✓'}</h2><ul>${r.results.map(x => `<li class="${x.error ? 'minus' : ''}"><b>${esc(x.name)}</b>: ${esc(x.status)}${x.error ? ' — ' + esc(x.error) : ` (+${x.added} / −${x.removed})`}${x.warning ? ' · ' + esc(x.warning) : ''}${x.url ? ` · <a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">abrir no Spotify ↗</a>` : ''}</li>`).join('')}</ul>${failed ? '<p class="muted">Nada foi repetido. Clique em "Ler de novo" para uma nova prévia com o que ainda falta.</p>' : ''}`;
+    $('publish-results').classList.remove('hidden');
+    $('publish-results').scrollIntoView({behavior: 'smooth'});
+    notify(failed ? failed.error : 'Playlists gravadas no Spotify.', !!failed);
+  });
+};
 
 // ---------- início ----------
 refresh().then(async () => {

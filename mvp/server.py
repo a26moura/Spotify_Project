@@ -16,6 +16,7 @@ from core import Store, suggest, norm, routing_key, infer_origin, needs_compleme
 from providers import Enricher, RemoteError, Spotify, clear_playlist, execute_plan, prepare_plan, request_json
 from classification import Ollama, merge_metadata, sample_tracks, expanded_rules, missing_reason
 import game
+import publish
 from collector import Collector
 
 ROOT = Path(__file__).resolve().parent
@@ -229,25 +230,46 @@ class Handler(BaseHTTPRequestHandler):
                 if path == '/api/profile-update':
                     if not isinstance(data.get('fields'),dict):raise ValueError('Requisição inválida.')
                     p=game.update_profile(STORE,account,str(data.get('key','')),data['fields'])
+                    self.invalidate(account)
                     return self.send(data={'profile':p,'message':'Playlist atualizada. Nada foi gravado no Spotify ainda.'})
                 if path == '/api/profile-create':
                     if not isinstance(data.get('fields'),dict):raise ValueError('Requisição inválida.')
                     p=game.create_profile(STORE,account,data['fields'])
+                    self.invalidate(account)
                     return self.send(data={'profile':p,'message':'Playlist "'+p['name']+'" criada no app. Ela só vai para o Spotify depois da prévia final.'})
                 if path == '/api/profile-delete':
                     game.delete_profile(STORE,account,str(data.get('key','')))
+                    self.invalidate(account)
                     return self.send(data={'message':'Playlist nova apagada do app.'})
                 if path == '/api/game-decide':
                     if not isinstance(data.get('playlists'),list):raise ValueError('Requisição inválida.')
                     game.decide(STORE,account,str(data.get('id','')),data['playlists'])
+                    self.invalidate(account)
                     return self.send(data=game.card(STORE,account))
                 if path == '/api/game-skip':
                     game.skip(STORE,account,str(data.get('id','')))
+                    self.invalidate(account)
                     return self.send(data=game.card(STORE,account))
                 if path == '/api/game-undo':
                     ident,undone=game.undo(STORE,account)
                     if ident is None:raise ValueError('Não há jogada para desfazer.')
+                    self.invalidate(account)
                     return self.send(data=game.card(STORE,account,ident,preset=undone))
+                if path == '/api/publish-preview':
+                    if not s.get('token'):raise ValueError('Conecte o Spotify para preparar a prévia.')
+                    plan=publish.prepare(STORE,account,self.api(s))
+                    s['publish']={'id':secrets.token_urlsafe(24),'plan':plan,'revision':s['revision'],'expires':time.time()+1800}
+                    view=dict(plan,items=[{k:v for k,v in i.items() if k!='live'} for i in plan['items']])
+                    return self.send(data=dict(view,id=s['publish']['id']))
+                if path == '/api/publish-execute':
+                    # A preview is used once: it is removed before writing, so a write is never repeated.
+                    pending=s.pop('publish',None)
+                    if not s.get('token') or not pending or pending['expires']<time.time() or not secrets.compare_digest(pending['id'],str(data.get('id',''))):
+                        raise ValueError('Prévia expirada ou já usada. Prepare uma nova prévia.')
+                    if pending['revision']!=s['revision']:raise ValueError('A biblioteca mudou depois da prévia. Prepare uma nova prévia.')
+                    results=publish.execute(STORE,account,self.api(s),pending['plan'])
+                    self.invalidate(account)
+                    return self.send(data={'results':results})
                 if path == '/api/collect-start':
                     started=COLLECTOR.start(account)
                     return self.send(data=dict(COLLECTOR.status(account),started=started))
@@ -470,7 +492,7 @@ class Handler(BaseHTTPRequestHandler):
         for s in SESSIONS.values():
             if s['account']==account:
                 s['revision'] += 1
-                s.pop('plan',None)
+                s.pop('plan',None); s.pop('publish',None)
 
 if __name__ == '__main__':
     import sys
