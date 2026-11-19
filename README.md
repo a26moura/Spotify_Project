@@ -29,7 +29,7 @@ O idioma e o gênero da playlist só destacam sugestões no jogo ("Combina"); qu
 ```text
 Spotify_Project/
   README.md              Este arquivo
-  CLAUDE.md              Contexto e regras para o Claude Code
+  CORRECOES.md           Log de bugs corrigidos
   mvp/
     INICIAR.cmd          Inicia o servidor local
     server.py            Servidor HTTP local, sessões, OAuth e rotas da API
