@@ -6,9 +6,11 @@ Organizador pessoal em forma de jogo: as suas músicas aparecem uma a uma, com c
 
 1. Abra `mvp/INICIAR.cmd` (Python 3.10+). O navegador abre em http://127.0.0.1:8765.
 2. **Conectar**: login no Spotify (OAuth PKCE, só o Client ID; instruções na tela e em [mvp/README.md](mvp/README.md)). O app importa as curtidas e as playlists criadas por você, e começa a buscar informações das músicas em segundo plano.
-3. **Playlists**: edite nome e descrição, diga o idioma e o gênero (ou clima) de cada playlist, crie novas e marque até 8 para o jogo.
-4. **Jogo**: arraste o cartão para uma ou mais playlists (ou use as teclas 1–8). Músicas que já estão numa playlist aparecem marcadas; desmarcar significa tirar dela. Enter passa, Espaço toca/pausa, S pula, Ctrl+Z desfaz. O progresso fica salvo. Para revisar uma playlist, use **Jogar só esta** no cartão dela: a rodada mostra só as músicas daquela playlist.
-5. **Prévia**: confira, por playlist, as músicas que entram e saem e as mudanças de nome e descrição. **Gravar no Spotify** pede confirmação.
+3. **Playlists**: edite nome e descrição, diga o idioma e o gênero (ou clima) de cada playlist, crie novas e marque até 8 como **destino no jogo** (os lugares para onde você arrasta as músicas).
+4. **Jogo**, em duas etapas:
+   - **Escolher músicas:** marque uma ou mais opções (ainda não jogadas, sem playlist, todas, ou as músicas de uma ou mais playlists).
+   - **Classificar:** arraste o cartão para uma ou mais playlists (ou use as teclas 1–8). Músicas que já estão numa playlist aparecem marcadas; desmarcar significa tirar dela. O coração mostra a curtida: vermelho, a música está (ou vai entrar) nas curtidas; cinza, não está (ou vai sair). Enter passa, Espaço toca/pausa, S pula, L curte, Ctrl+Z desfaz. O progresso fica salvo.
+5. **Prévia**: confira, por playlist, as músicas que entram e saem, as mudanças de nome e descrição e as músicas que entram ou saem das curtidas. **Gravar no Spotify** pede confirmação.
 
 O app nunca grava sem prévia confirmada, nunca repete uma gravação automaticamente e não mexe em playlists que mudaram no Spotify depois da prévia. Playlists novas são criadas como privadas. Detalhes do fluxo em [mvp/FLUXO.md](mvp/FLUXO.md).
 

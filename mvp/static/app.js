@@ -40,7 +40,7 @@ function allowed(name) {
   if (name === 'connect') return true;
   if (!state.connected || !state.synced_at) return false;
   if (name === 'playlists') return true;
-  return state.profiles.some(p => p.active);
+  return state.profiles.some(p => !p.missing);
 }
 function go(name) {
   if (!allowed(name)) return;
@@ -48,7 +48,11 @@ function go(name) {
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('hidden', s.id !== 'screen-' + name);
   if (name !== 'game') stopAudio();
   render();
-  if (name === 'game') loadCard().catch(e => notify(e.message, true));
+  if (name === 'game') loadCard().then(() => {
+    // Sem rodada (ou vindo de "Escolher músicas"), a primeira etapa é escolher as músicas.
+    if (setupWanted || !game.focus) showSetup(); else hideSetup();
+    setupWanted = false;
+  }).catch(e => notify(e.message, true));
   if (name === 'playlists') refresh().catch(e => notify(e.message, true));
   if (name === 'preview') loadPlan();
 }
@@ -120,11 +124,11 @@ function fillList(id, values) {
 function renderPlaylists() {
   const active = state.profiles.filter(p => p.active).length;
   $('max-active').textContent = state.max_active;
-  $('active-count').textContent = `${active} de ${state.max_active} playlists no jogo`;
+  $('active-count').textContent = `${active} de ${state.max_active} destinos no jogo`;
   const pr = state.progress;
   $('library-count').textContent = `${pr.total} músicas · ${pr.decided} já distribuídas`;
   showCollect(state.collect);
-  $('start-game').disabled = !active;
+  $('start-game').disabled = !state.profiles.some(p => !p.missing);
   fillList('languages', [...LANGUAGES, ...state.languages]);
   fillList('genres', state.genres);
   const list = $('profiles');
@@ -155,7 +159,6 @@ function updateCard(card, p, fields = true) {
   const changed = p.count_after !== p.count ? ` → ${p.count_after} depois do jogo` : '';
   card.querySelector('.count').textContent = `${p.count} músicas${changed}`;
   card.querySelector('.f-delete').classList.toggle('hidden', !!p.spotify_id);
-  card.querySelector('.f-focus').classList.toggle('hidden', !!p.missing || !p.count_after);
   card.querySelector('.counter').textContent = `${card.querySelector('.f-description').value.length}/300`;
 }
 function profileCard(p) {
@@ -183,10 +186,6 @@ function profileCard(p) {
   }
   card.querySelector('.f-description').addEventListener('input', e => { card.querySelector('.counter').textContent = `${e.target.value.length}/300`; });
   card.querySelector('.f-active').addEventListener('change', e => save({active: e.target.checked}));
-  card.querySelector('.f-focus').onclick = () => action(card.querySelector('.f-focus'), async () => {
-    const r = await api('game-focus', {key: p.key}); notify(r.message);
-    await refresh(); go('game');
-  });
   card.querySelector('.f-delete').onclick = () => action(card.querySelector('.f-delete'), async () => {
     if (!confirm(`Apagar a playlist nova "${p.name}" do app? As músicas que você colocou nela saem dela.`)) return;
     const r = await api('profile-delete', {key: p.key}); await refresh(); notify(r.message);
@@ -206,10 +205,64 @@ $('new-playlist').onclick = () => {
     $('dialog').close(); await refresh(); notify(r.message);
   });
 };
-$('start-game').onclick = () => go('game');
+$('start-game').onclick = () => { setupWanted = true; go('game'); };
+
+// ---------- escolher as músicas da rodada ----------
+// Etapa 1 do jogo: de onde vêm as músicas (uma ou mais fontes). Etapa 2: o jogo com elas.
+let setupWanted = false;
+const SPECIAL = [['pending', 'Ainda não jogadas', 'Músicas que você ainda não classificou'],
+                 ['unplaced', 'Sem playlist', 'Músicas que não estão em nenhuma playlist'],
+                 ['all', 'Todas as músicas', 'A biblioteca inteira, de novo']];
+function sourceOption(key, name, hint, count, checked) {
+  const el = $('source-template').content.firstElementChild.cloneNode(true);
+  const box = el.querySelector('input');
+  box.value = key; box.checked = checked; box.disabled = !count;
+  el.title = hint || '';
+  el.querySelector('.source-name').textContent = name;
+  el.querySelector('.source-count').textContent = `${count} ${count === 1 ? 'música' : 'músicas'}`;
+  box.onchange = updateSetup;
+  return el;
+}
+function showSetup() {
+  const counts = state.sources || {};
+  const previous = new Set(game?.focus?.sources || []);
+  const fallback = counts.pending ? 'pending' : 'unplaced';
+  $('sources-special').innerHTML = '';
+  for (const [key, name, hint] of SPECIAL)
+    $('sources-special').append(sourceOption(key, name, hint, counts[key] || 0, previous.size ? previous.has(key) : key === fallback && !!counts[key]));
+  $('sources-playlists').innerHTML = '';
+  for (const p of state.profiles.filter(p => !p.missing))
+    $('sources-playlists').append(sourceOption(p.key, p.name, '', counts[p.key] || 0, previous.has(p.key)));
+  $('setup-cancel').classList.toggle('hidden', !game?.focus || !game?.track);
+  updateSetup();
+  for (const id of ['focus-bar', 'board', 'game-done']) $(id).classList.add('hidden');
+  document.querySelector('.game-top').classList.add('hidden');
+  document.querySelector('.hint').classList.add('hidden');
+  $('round-setup').classList.remove('hidden');
+  stopAudio();
+}
+function selectedSources() { return [...document.querySelectorAll('#round-setup input:checked')].map(x => x.value); }
+function updateSetup() {
+  const all = document.querySelector('#round-setup input[value="all"]');
+  for (const box of document.querySelectorAll('#round-setup input')) {
+    if (box !== all) box.closest('.source').classList.toggle('covered', all.checked);
+  }
+  $('setup-start').disabled = !selectedSources().length;
+}
+function hideSetup() {
+  $('round-setup').classList.add('hidden');
+  document.querySelector('.game-top').classList.remove('hidden');
+  document.querySelector('.hint').classList.remove('hidden');
+}
+$('setup-start').onclick = () => action($('setup-start'), async () => {
+  const sources = selectedSources().includes('all') ? ['all'] : selectedSources();
+  const r = await api('game-focus', {sources});
+  notify(r.message); hideSetup(); showCard(r); await refreshProfiles();
+});
+$('setup-cancel').onclick = () => { hideSetup(); showCard(game); };
 
 // ---------- jogo ----------
-let game = null, chosen = new Set(), busy = false, previewToken = 0;
+let game = null, chosen = new Set(), like = false, busy = false, previewToken = 0;
 const ORIGIN = {faixa: 'pela faixa', album: 'pelo álbum', letra: 'pela letra', artista: 'pelo artista', ia: 'por IA', manual: 'revisão sua'};
 const player = $('player');
 const pref = (key, fallback) => { try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } };
@@ -227,14 +280,14 @@ async function loadCard(id) {
 function showCard(data) {
   game = data;
   chosen = new Set(data.marks || []);
+  like = !!data.like;
   const pr = data.progress;
   $('progress-bar').style.width = pr.total ? (100 * pr.decided / pr.total) + '%' : '0';
   $('progress-text').textContent = `${pr.decided} de ${pr.total} distribuídas` + (pr.skipped ? ` · ${pr.skipped} puladas` : '');
   const f = data.focus;
   $('focus-bar').classList.toggle('hidden', !f);
-  if (f) $('focus-text').innerHTML = `Rodada só com a playlist <b>${esc(f.name)}</b> (${f.tracks.length} músicas). Tire o que não combina, ou mande para outras.`;
-  $('done-title').textContent = f ? `Revisão de "${f.name}" concluída 🎉` : 'Todas as músicas foram distribuídas 🎉';
-  $('done-all').classList.toggle('hidden', !f);
+  if (f) $('focus-text').innerHTML = `Rodada: <b>${esc(f.name)}</b> · ${f.tracks.length} ${f.tracks.length === 1 ? 'música' : 'músicas'}`;
+  $('done-title').textContent = f ? `Rodada "${f.name}" concluída 🎉` : 'Rodada concluída 🎉';
   const t = data.track;
   $('board').classList.toggle('hidden', !t);
   $('game-done').classList.toggle('hidden', !!t);
@@ -282,8 +335,19 @@ function renderZones() {
   }
   updateZones();
 }
+// Coração: vermelho = nas curtidas ou vai entrar; cinza = fora das curtidas ou vai sair.
+function updateLike() {
+  const b = $('like'), was = !!game?.track?.liked;
+  b.classList.toggle('on', like);
+  b.classList.toggle('changed', like !== was);
+  b.setAttribute('aria-pressed', like);
+  b.querySelector('.heart').textContent = like ? '♥' : '♡';
+  b.title = (like ? (was ? 'Nas suas curtidas' : 'Vai entrar nas curtidas') : (was ? 'Vai sair das curtidas' : 'Fora das curtidas')) + ' (L)';
+}
+$('like').onclick = () => { like = !like; updateLike(); };
 function updateZones() {
   if (!game || !game.track) return;
+  updateLike();
   for (const zone of document.querySelectorAll('.zone')) {
     const key = zone.dataset.key, on = chosen.has(key), was = game.in_spotify.includes(key);
     zone.classList.toggle('on', on);
@@ -335,13 +399,12 @@ async function move(path, data) {
   finally { busy = false; }
 }
 async function refreshProfiles() { const fresh = await api('game'); state.profiles = fresh.profiles; state.progress = fresh.progress; }
-$('next').onclick = () => game?.track && move('game-decide', {id: game.track.id, playlists: [...chosen]});
+$('next').onclick = () => game?.track && move('game-decide', {id: game.track.id, playlists: [...chosen], like});
 $('skip').onclick = () => game?.track && move('game-skip', {id: game.track.id});
 $('undo').onclick = () => move('game-undo', {});
 $('to-preview').onclick = () => go('preview');
-const focusOff = () => move('game-focus', {key: null});
-$('focus-off').onclick = focusOff;
-$('done-all').onclick = focusOff;
+$('focus-change').onclick = showSetup;
+$('done-more').onclick = showSetup;
 $('done-preview').onclick = () => go('preview');
 
 // Áudio: o link de 30 s do Deezer é buscado na hora (expira) e nunca guardado.
@@ -377,6 +440,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'Enter') { e.preventDefault(); $('next').click(); }
   else if (e.key === ' ') { e.preventDefault(); playPause(); }
   else if (e.key.toLowerCase() === 's') { e.preventDefault(); $('skip').click(); }
+  else if (e.key.toLowerCase() === 'l') { e.preventDefault(); $('like').click(); }
 });
 
 // ---------- prévia final e gravação ----------
@@ -391,8 +455,8 @@ async function loadPlan() {
   try {
     plan = await api('publish-preview', {});
     const t = plan.totals;
-    $('preview-totals').innerHTML = t.playlists
-      ? `<span><b>${plural(t.playlists, 'playlist vai', 'playlists vão')}</b> mudar</span><span><b>${plural(t.create, 'nova', 'novas')}</b></span><span class="plus"><b>+${t.add}</b> entram</span><span class="minus"><b>−${t.remove}</b> saem</span>`
+    $('preview-totals').innerHTML = t.playlists || t.like || t.unlike
+      ? `${t.playlists ? `<span><b>${plural(t.playlists, 'playlist vai', 'playlists vão')}</b> mudar</span><span><b>${plural(t.create, 'nova', 'novas')}</b></span><span class="plus"><b>+${t.add}</b> entram</span><span class="minus"><b>−${t.remove}</b> saem</span>` : ''}${t.like ? `<span class="plus"><b>♥ ${t.like}</b> nas curtidas</span>` : ''}${t.unlike ? `<span class="minus"><b>♡ ${t.unlike}</b> fora das curtidas</span>` : ''}`
       : '<span>Nada para gravar: o Spotify já está igual às suas escolhas.</span>';
     $('preview-list').innerHTML = plan.items.map(i => `
       <article class="plan ${i.action}">
@@ -401,8 +465,14 @@ async function loadPlan() {
         ${i.describe ? `<p class="change">Descrição: ${i.describe.from ? `<s>${esc(i.describe.from)}</s> → ` : ''}${esc(i.describe.to) || '<i>vazia</i>'}</p>` : ''}
         <p class="counts">${i.before} → <b>${i.after}</b> músicas ${i.add.length ? `<span class="plus">+${i.add.length}</span>` : ''} ${i.remove.length ? `<span class="minus">−${i.remove.length}</span>` : ''}</p>
         ${i.add.length || i.remove.length ? `<details${i.add.length + i.remove.length <= 6 ? ' open' : ''}><summary>Ver músicas</summary>${songList(i.add, 'plus')}${songList(i.remove, 'minus')}</details>` : ''}
-      </article>`).join('');
-    $('publish').disabled = !t.playlists;
+      </article>`).join('') + (plan.like.length || plan.unlike.length ? `
+      <article class="plan update">
+        <header><h2>Músicas curtidas</h2><span class="badge">Vão mudar</span></header>
+        <p class="counts">${plan.like.length ? `<span class="plus">♥ +${plan.like.length}</span>` : ''} ${plan.unlike.length ? `<span class="minus">♡ −${plan.unlike.length}</span>` : ''}</p>
+        ${plan.unlike.some(x => !x.stays) ? `<p class="change">${plural(plan.unlike.filter(x => !x.stays).length, 'das que saem não fica', 'das que saem não ficam')} em nenhuma playlist e some do app na próxima sincronização.</p>` : ''}
+        <details${plan.like.length + plan.unlike.length <= 6 ? ' open' : ''}><summary>Ver músicas</summary>${songList(plan.like, 'plus')}${songList(plan.unlike, 'minus')}</details>
+      </article>` : '');
+    $('publish').disabled = !(t.playlists || t.like || t.unlike);
   } catch (e) { $('preview-totals').textContent = ''; notify(e.message, true); }
 }
 $('refresh-preview').onclick = () => action($('refresh-preview'), loadPlan);
@@ -410,8 +480,9 @@ $('back-game').onclick = () => go('game');
 $('publish').onclick = () => {
   if (!plan) return;
   const t = plan.totals;
-  modal('Gravar no Spotify?', `<p>Vou alterar <b>${plural(t.playlists, 'playlist', 'playlists')}</b>${t.create ? ` (${plural(t.create, 'nova', 'novas')}, criada${t.create === 1 ? '' : 's'} como privada${t.create === 1 ? '' : 's'})` : ''}: <b>+${t.add}</b> músicas entram e <b>−${t.remove}</b> saem.</p>
-    ${t.remove ? '<p>As remoções não têm desfazer automático. Se quiser uma música de volta, coloque-a de novo pelo jogo.</p>' : ''}
+  modal('Gravar no Spotify?', `${t.playlists ? `<p>Vou alterar <b>${plural(t.playlists, 'playlist', 'playlists')}</b>${t.create ? ` (${plural(t.create, 'nova', 'novas')}, criada${t.create === 1 ? '' : 's'} como privada${t.create === 1 ? '' : 's'})` : ''}: <b>+${t.add}</b> músicas entram e <b>−${t.remove}</b> saem.</p>` : ''}
+    ${t.like || t.unlike ? `<p>Depois das playlists, ${t.like ? `<b>${plural(t.like, 'música entra', 'músicas entram')}</b> nas suas curtidas` : ''}${t.like && t.unlike ? ' e ' : ''}${t.unlike ? `<b>${plural(t.unlike, 'música sai', 'músicas saem')}</b> delas` : ''}.</p>` : ''}
+    ${t.remove || t.unlike ? '<p>As remoções não têm desfazer automático. Se quiser uma música de volta, coloque-a de novo pelo jogo ou curta de novo no Spotify.</p>' : ''}
     <p class="muted">Se alguma playlist tiver mudado no Spotify depois desta prévia, ela não é alterada e a gravação para ali.</p>
     <div class="dialog-actions"><button id="cancel-publish" class="secondary">Cancelar</button><button id="confirm-publish" class="primary">Gravar agora</button></div>`);
   $('cancel-publish').onclick = () => $('dialog').close();

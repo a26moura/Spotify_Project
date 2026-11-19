@@ -4,6 +4,12 @@ Cada correção diz o que acontecia, a causa e o que mudou. O commit indicado te
 
 ## Versão jogo
 
+### 19/11/2026: segundo uso na conta real
+
+| Problema | Causa | Correção |
+|---|---|---|
+| "Jogar só esta" mostrava as músicas da playlist, mas não dava para mandá-las para outras playlists. | A rodada usava como destino só as playlists marcadas "No jogo", e só a própria playlist estava marcada. O nome "No jogo" sugeria "jogar com as músicas desta playlist". | Na rodada, todas as suas playlists viram destino (até 8), e "No jogo" virou "Destino no jogo". Escolher as músicas virou a primeira etapa do jogo ("Escolher músicas"), com várias opções ao mesmo tempo. |
+
 ### 19/11/2026: primeiro uso na conta real (commit `c7c7efc`)
 
 | Problema | Causa | Correção |

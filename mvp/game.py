@@ -197,6 +197,9 @@ def decisions(store, account):
     ensure(store)
     with store.connect() as db:
         rows = {track: json.loads(data) for track, data in db.execute('SELECT track,data FROM decisions WHERE account=?', (account,))}
+    for d in rows.values():
+        # Before 19/11/2026 the heart could only remove: 'unlike': True means "not liked".
+        if d.pop('unlike', None): d.setdefault('like', False)
     alias = aliases(store.tracks(account, active=True))
     result = {t: d for t, d in rows.items() if alias.get(t, t) == t}
     for t, d in rows.items():
@@ -224,21 +227,48 @@ def _track(store, account, track):
     return track
 
 
-def decide(store, account, track, chosen):
+def liked_now(store, account, track_id):
+    """True when some version of the song is in your liked songs (last sync)."""
+    _, alias, _ = deck(store, account)
+    return any(t.get('liked') for t in store.tracks(account, active=True) if alias.get(t['id'], t['id']) == track_id)
+
+
+def decide(store, account, track, chosen, like=None):
     """Save where the track goes among the active playlists. Playlists outside the game keep
-    whatever was decided before."""
+    whatever was decided before. like=True/False is whether you want the song in your liked songs
+    (written only in the final preview); None keeps what was chosen before."""
     track = _track(store, account, track)
     active = [p['key'] for p in profiles(store, account) if p.get('active')]
     if not isinstance(chosen, list) or any(k not in active for k in chosen):
         raise ValueError('Escolha só playlists ativas no jogo.')
+    if like is not None and not isinstance(like, bool): raise ValueError('Valor inválido para a curtida.')
     current = membership(store, account)
     before = decisions(store, account).get(track)
     kept = before or {'add': [], 'remove': []}
     after = {'add': [k for k in kept['add'] if k not in active] + [k for k in active if k in chosen and track not in current.get(k, set())],
              'remove': [k for k in kept['remove'] if k not in active] + [k for k in active if k not in chosen and track in current.get(k, set())],
              'skipped': False, 'at': time.time()}
+    wanted = kept.get('like') if like is None else like
+    if wanted is not None and wanted != liked_now(store, account, track): after['like'] = wanted
     with store.connect() as db: _write(db, account, track, before, after)
     return after
+
+
+def set_liked(store, account, track_id, liked):
+    """After the Spotify saved or removed the song in your liked songs: the local copy follows
+    and the choice is cleared. Removing takes out every version; saving marks the card's version."""
+    _, alias, _ = deck(store, account)
+    for t in store.tracks(account, active=True):
+        if alias.get(t['id'], t['id']) != track_id: continue
+        if liked and t['id'] == track_id and not t.get('liked'):
+            t.update(liked=True, added_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())); store.put(account, t)
+        elif not liked and t.get('liked'):
+            t.update(liked=False, added_at=None); store.put(account, t)
+    with store.connect() as db:
+        for row_track, data in db.execute('SELECT track,data FROM decisions WHERE account=?', (account,)).fetchall():
+            if alias.get(row_track, row_track) == track_id:
+                d = json.loads(data); d.pop('like', None); d.pop('unlike', None)
+                db.execute('UPDATE decisions SET data=? WHERE account=? AND track=?', (json.dumps(d), account, row_track))
 
 
 def skip(store, account, track):
@@ -266,36 +296,79 @@ def undo(store, account):
 
 # ---------- rodada só com uma playlist ----------
 
+UNPLACED = 'unplaced'  # songs that are in none of your playlists
+PENDING = 'pending'    # songs never played
+ALL = 'all'            # every song
+SPECIAL = {PENDING: 'Ainda não jogadas', UNPLACED: 'Sem playlist', ALL: 'Todas as músicas'}
+
+
+def unplaced(store, account):
+    """Canonical ids of the songs that will be in none of your playlists."""
+    cards, _, _ = deck(store, account)
+    keys = [p['key'] for p in profiles(store, account) if not p.get('missing')]
+    current, done = membership(store, account), decisions(store, account)
+    return [t['id'] for t in cards if not marks(t['id'], done.get(t['id']), current, keys)]
+
+
+def source_tracks(store, account):
+    """For each source you can pick for a round: the canonical ids it brings."""
+    cards, _, _ = deck(store, account)
+    current, done = membership(store, account), decisions(store, account)
+    result = {PENDING: [t['id'] for t in cards if t['id'] not in done or done[t['id']].get('skipped')],
+              UNPLACED: unplaced(store, account), ALL: [t['id'] for t in cards]}
+    for p in profiles(store, account):
+        if not p.get('missing'):
+            result[p['key']] = [t['id'] for t in cards if p['key'] in marks(t['id'], done.get(t['id']), current, [p['key']])]
+    return result
+
+
+def _round_name(store, account, sources):
+    names = {p['key']: p['name'] for p in profiles(store, account)}
+    labels = [SPECIAL.get(k) or names.get(k) for k in sources]
+    return ' + '.join(l for l in labels if l) or 'Rodada'
+
+
 def focus(store, account):
-    """The current round limited to one playlist: {'key','name','started','tracks'} or None."""
+    """The current round: {'sources','name','started','tracks'} or None. The tracks are fixed when
+    the round starts (moving a song out of a playlist does not take it out of the round)."""
     ensure(store)
     with store.connect() as db:
         row = db.execute('SELECT data FROM focus WHERE account=?', (account,)).fetchone()
     if not row: return None
     data = json.loads(row[0])
-    p = next((p for p in profiles(store, account) if p['key'] == data['key'] and not p.get('missing')), None)
-    return dict(data, name=p['name']) if p else None
+    if 'sources' not in data: data['sources'] = [data.pop('key')]   # rounds saved before 19/11/2026
+    return dict(data, name=_round_name(store, account, data['sources']))
 
 
-def set_focus(store, account, key):
-    """Start a round with only the songs that are (or will be) in this playlist, even the ones
-    already decided, so the playlist can be reviewed. key=None ends the round."""
+def _activate_destinations(store, account, sources):
+    """A round is for moving songs around, so the destinations are all your playlists when they
+    fit in the game (up to MAX_ACTIVE); otherwise the round's playlists are added to the active ones."""
+    rows = [p for p in profiles(store, account) if not p.get('missing')]
+    wanted = [p['key'] for p in rows] if len(rows) <= MAX_ACTIVE else [k for k in sources if k not in SPECIAL]
+    for p in rows:
+        if p['key'] in wanted and not p.get('active'):
+            if sum(1 for r in profiles(store, account) if r.get('active')) >= MAX_ACTIVE:
+                raise ValueError(f'"{p["name"]}" precisa ser destino no jogo: tire outra das {MAX_ACTIVE} antes.')
+            update_profile(store, account, p['key'], {'active': True})
+
+
+def set_focus(store, account, sources):
+    """Start a round with the songs of the chosen sources together: PENDING, UNPLACED, ALL and/or
+    playlist keys (even songs already decided come back). None ends the round."""
     ensure(store)
-    if key is None:
+    if sources is None:
         with store.connect() as db: db.execute('DELETE FROM focus WHERE account=?', (account,))
         return None
-    rows = {p['key']: p for p in profiles(store, account)}
-    p = rows.get(key)
-    if not p or p.get('missing'): raise ValueError('Playlist não encontrada.')
-    if not p.get('active'):
-        if sum(1 for r in rows.values() if r.get('active')) >= MAX_ACTIVE:
-            raise ValueError(f'Esta playlist precisa estar no jogo: tire outra das {MAX_ACTIVE} ativas antes.')
-        update_profile(store, account, key, {'active': True})
+    if isinstance(sources, str): sources = [sources]
+    available = source_tracks(store, account)
+    if not isinstance(sources, list) or not sources or any(k not in available for k in sources):
+        raise ValueError('Escolha de onde vêm as músicas da rodada.')
+    wanted = set().union(*(available[k] for k in sources))
     cards, _, _ = deck(store, account)
-    current, done = membership(store, account), decisions(store, account)
-    tracks = [t['id'] for t in cards if key in marks(t['id'], done.get(t['id']), current, [key])]
-    if not tracks: raise ValueError('Esta playlist não tem músicas para revisar.')
-    data = {'key': key, 'started': time.time(), 'tracks': tracks}
+    tracks = [t['id'] for t in cards if t['id'] in wanted]
+    if not tracks: raise ValueError('Não há músicas nessa escolha.')
+    _activate_destinations(store, account, sources)
+    data = {'sources': list(dict.fromkeys(sources)), 'started': time.time(), 'tracks': tracks}
     with store.connect() as db: db.execute('INSERT OR REPLACE INTO focus VALUES (?,?)', (account, json.dumps(data)))
     return focus(store, account)
 
@@ -361,7 +434,8 @@ def overview(store, account):
         for l in meta.get('languages') or []: languages[l] = languages.get(l, 0) + 1
     top = lambda counts, n: [k for k, _ in sorted(counts.items(), key=lambda kv: (-kv[1], norm(kv[0])))[:n]]
     return {'profiles': rows, 'max_active': MAX_ACTIVE, 'genres': top(genres, 40), 'languages': top(languages, 20),
-            'progress': progress(store, account), 'focus': focus(store, account)}
+            'progress': progress(store, account), 'focus': focus(store, account),
+            'sources': {k: len(v) for k, v in source_tracks(store, account).items()}}
 
 
 # ---------- cartão do jogo ----------
@@ -408,8 +482,11 @@ def card(store, account, track_id=None, preset=None):
                 versions=len(members.get(track_id, [track_id])),
                 labels=list(dict.fromkeys(l['label'] for l in t.get('source_labels') or [] if l.get('kind') in ('genre', 'album-genre', 'artist-genre')))[:8])
     shown = preset if preset and not preset.get('skipped') else decision
+    info['liked'] = any(x.get('liked') for x in store.tracks(account, active=True) if alias.get(x['id'], x['id']) == track_id)
+    wanted = (shown or {}).get('like')
     return {'track': info, 'marks': marks(track_id, shown, current, keys),
             'in_spotify': [k for k in keys if track_id in current.get(k, set())],
             'suggested': [p['key'] for p in active if suggested(t, p)],
             'decided': bool(decision) and not decision.get('skipped'),
+            'like': info['liked'] if wanted is None else wanted,
             'progress': progress(store, account), 'remaining': remaining, 'focus': round_}

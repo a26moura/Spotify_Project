@@ -19,12 +19,13 @@ Informe só o **Client ID** (não é segredo; fica em `runtime/config.json`, ou 
 - **Gravação** (só na prévia final, depois da confirmação):
   - adicionar e remover músicas das suas playlists, em lotes de até 100;
   - mudar nome e descrição;
-  - criar playlists novas, sempre privadas.
+  - criar playlists novas, sempre privadas;
+  - colocar nas curtidas ou tirar delas as músicas cujo coração você mudou no jogo (`PUT` e `DELETE /me/library`, até 40 por requisição), só depois que todas as playlists foram gravadas. Isso pede a permissão `user-library-modify`: quem conectou antes de 19/11/2026 precisa desconectar e conectar de novo.
 - A prévia lê o Spotify na hora. Na gravação, cada playlist é lida de novo e, se mudou desde a prévia, não é alterada e a gravação para ali.
 - A prévia é de uso único e deixa de valer com qualquer nova escolha no jogo ou nas playlists.
 - Em falha, nada é repetido automaticamente: "Ler de novo" mostra o que ainda falta.
 - Uma playlist nova nasce com uma descrição temporária (identificador do app) e logo recebe a sua descrição. Se a resposta da criação se perder, a próxima prévia encontra a playlist por esse identificador em vez de criar outra.
-- Curtidas nunca são alteradas.
+- Curtidas só mudam quando você muda o coração no jogo e confirma na prévia. Uma música tirada das curtidas que não está em nenhuma playlist some do app na próxima sincronização (a prévia avisa).
 
 ## Dados e segurança
 

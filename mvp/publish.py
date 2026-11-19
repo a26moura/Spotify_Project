@@ -6,11 +6,14 @@ nenhuma gravação é repetida automaticamente (após uma falha, prepare nova pr
 """
 import hashlib
 import html
+import urllib.parse
 
 import game
 from providers import RemoteError
 
 CHUNK = 100  # limite do Spotify por requisição para adicionar ou remover itens
+LIBRARY_CHUNK = 40  # limite de PUT/DELETE /me/library
+LIBRARY_SCOPE = 'user-library-modify'
 
 
 def marker(account, key):
@@ -73,11 +76,24 @@ def prepare(store, account, api):
         items.append(item)
     order = {'create': 0, 'update': 1, 'skip': 2, 'same': 3}
     items.sort(key=lambda i: order[i['action']])
+    # Liked songs: what you want (heart) against what the Spotify has. Saving uses the card's
+    # version; removing takes out every liked version. A song removed from the liked songs and in
+    # no playlist leaves the app at the next sync ('stays': False).
+    liked = {}
+    for t in store.tracks(account, active=True):
+        if t.get('liked'): liked.setdefault(alias.get(t['id'], t['id']), []).append(_uri(t['id']))
+    loose = set(game.unplaced(store, account))
+    wanted = {t: d['like'] for t, d in done.items() if t in tracks and d.get('like') is not None}
+    row = lambda i, uris: {'id': i, 'title': tracks[i]['title'], 'artists': tracks[i]['artists'], 'uris': uris, 'stays': i not in loose}
+    by_title = lambda ids: sorted(ids, key=lambda i: tracks[i]['title'].casefold())
+    like = [row(i, [_uri(i)]) for i in by_title(t for t, w in wanted.items() if w and t not in liked)]
+    unlike = [row(i, liked[i]) for i in by_title(t for t, w in wanted.items() if not w and t in liked)]
     totals = {'playlists': sum(1 for i in items if i['action'] in ('create', 'update')),
               'create': sum(1 for i in items if i['action'] == 'create'),
               'add': sum(len(i['add']) for i in items if i['action'] in ('create', 'update')),
-              'remove': sum(len(i['remove']) for i in items if i['action'] == 'update')}
-    return {'items': items, 'totals': totals}
+              'remove': sum(len(i['remove']) for i in items if i['action'] == 'update'),
+              'like': len(like), 'unlike': len(unlike)}
+    return {'items': items, 'totals': totals, 'like': like, 'unlike': unlike}
 
 
 def execute(store, account, api, plan):
@@ -123,6 +139,20 @@ def execute(store, account, api, plan):
                             'added': len(add), 'removed': len(remove), 'url': 'https://open.spotify.com/playlist/' + ident,
                             **({'warning': warning} if warning else {})})
         except (RemoteError, ValueError) as error:
+            results.append({'name': name, 'status': 'Falha', 'error': str(error)})
+            return results
+    # Liked songs last, and only when every playlist was written.
+    for group, method, value in (('like', 'PUT', True), ('unlike', 'DELETE', False)):
+        rows = plan.get(group) or []
+        if not rows: continue
+        name = 'Curtidas: entram' if value else 'Curtidas: saem'
+        try:
+            uris = [u for t in rows for u in t['uris']]
+            for start in range(0, len(uris), LIBRARY_CHUNK):
+                api.call('/me/library?' + urllib.parse.urlencode({'uris': ','.join(uris[start:start + LIBRARY_CHUNK])}), method)
+            for t in rows: game.set_liked(store, account, t['id'], value)
+            results.append({'name': name, 'status': 'Atualizada', 'added': len(rows) if value else 0, 'removed': 0 if value else len(rows)})
+        except RemoteError as error:
             results.append({'name': name, 'status': 'Falha', 'error': str(error)})
             break
     return results

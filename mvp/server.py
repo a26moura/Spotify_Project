@@ -32,7 +32,7 @@ SESSIONS = {}
 LOCK = threading.RLock()
 COLLECTOR = Collector(STORE, ENRICHER, LOCK)
 CONFIG_PATH = Path(os.environ.get('SPOTIFY_PROJECT_CONFIG', str(ROOT / 'runtime/config.json')))
-SCOPE = 'user-library-read playlist-read-private playlist-modify-private playlist-modify-public'
+SCOPE = 'user-library-read user-library-modify playlist-read-private playlist-modify-private playlist-modify-public'
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://i.scdn.co; "
        "media-src https://*.dzcdn.net; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 FILES = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'application/javascript; charset=utf-8'),
@@ -275,16 +275,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def post_game_decide(self, s, account, data):
         if not isinstance(data.get('playlists'), list): raise ValueError('Requisição inválida.')
-        game.decide(STORE, account, str(data.get('id', '')), data['playlists'])
+        game.decide(STORE, account, str(data.get('id', '')), data['playlists'], data.get('like'))
         self.invalidate(account)
         return self.send(data=game.card(STORE, account))
 
     def post_game_focus(self, s, account, data):
-        key = data.get('key')
-        if key is not None and not isinstance(key, str): raise ValueError('Requisição inválida.')
-        round_ = game.set_focus(STORE, account, key)
+        sources = data.get('sources')
+        if sources is not None and not (isinstance(sources, list) and all(isinstance(k, str) for k in sources)):
+            raise ValueError('Requisição inválida.')
+        round_ = game.set_focus(STORE, account, sources)
         self.invalidate(account)
-        return self.send(data=dict(game.card(STORE, account), message=f'Rodada só com "{round_["name"]}": {len(round_["tracks"])} músicas.' if round_ else 'Rodada com todas as músicas.'))
+        message = f'Rodada "{round_["name"]}": {len(round_["tracks"])} músicas.' if round_ else 'Rodada encerrada.'
+        return self.send(data=dict(game.card(STORE, account), message=message))
 
     def post_game_skip(self, s, account, data):
         game.skip(STORE, account, str(data.get('id', '')))
@@ -302,6 +304,9 @@ class Handler(BaseHTTPRequestHandler):
     def post_publish_preview(self, s, account, data):
         if not s.get('token'): raise ValueError('Conecte o Spotify para preparar a prévia.')
         plan = publish.prepare(STORE, account, self.api(s))
+        granted = str(s['token'].get('scope') or '').split()
+        if (plan['like'] or plan['unlike']) and granted and publish.LIBRARY_SCOPE not in granted:
+            raise ValueError('Para mudar suas curtidas, o app precisa de uma permissão nova: desconecte e conecte o Spotify de novo. Suas escolhas ficam salvas.')
         s['publish'] = {'id': secrets.token_urlsafe(24), 'plan': plan, 'revision': s['revision'], 'expires': time.time() + 1800}
         view = dict(plan, items=[{k: v for k, v in i.items() if k != 'live'} for i in plan['items']])
         return self.send(data=dict(view, id=s['publish']['id']))

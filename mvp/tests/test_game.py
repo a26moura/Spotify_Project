@@ -244,3 +244,59 @@ class RepeatedAndFocusTests(unittest.TestCase):
         self.assertEqual(game.progress(self.store, A)['total'], 2)
         with self.assertRaises(ValueError): game.set_focus(self.store, A, 'p2')  # Pop is empty now
         with self.assertRaises(ValueError): game.set_focus(self.store, A, 'zz')
+
+
+class RoundTests(unittest.TestCase):
+    setUp, tearDown, library, activate = GameTests.setUp, GameTests.tearDown, GameTests.library, GameTests.activate
+
+    def test_round_uses_every_playlist_as_destination(self):
+        # Only Rock is a destination; the round on Rock makes Pop a destination too.
+        self.activate('p1')
+        game.set_focus(self.store, A, 'p1')
+        self.assertEqual([p['key'] for p in game.profiles(self.store, A) if p['active']], ['p1', 'p2'])
+
+    def test_more_than_eight_playlists_only_adds_the_round_playlist(self):
+        for i in range(8): game.create_profile(self.store, A, {'name': f'Nova {i}'})
+        for p in game.profiles(self.store, A): game.update_profile(self.store, A, p['key'], {'active': False})
+        game.set_focus(self.store, A, 'p1')
+        self.assertEqual([p['key'] for p in game.profiles(self.store, A) if p['active']], ['p1'])
+
+    def test_unplaced_round(self):
+        self.activate('p1', 'p2')
+        self.assertEqual(sorted(game.unplaced(self.store, A)), [T2, T3])       # T1 is in Rock
+        round_ = game.set_focus(self.store, A, game.UNPLACED)
+        self.assertEqual((round_['name'], sorted(round_['tracks'])), ('Sem playlist', [T2, T3]))
+        self.assertEqual(sorted(game.queue(self.store, A)), [T2, T3])
+        game.decide(self.store, A, T2, ['p2'])
+        self.assertEqual(game.queue(self.store, A), [T3])
+        self.assertEqual(game.overview(self.store, A)['sources'][game.UNPLACED], 1)
+        game.decide(self.store, A, T3, ['p1'])
+        game.set_focus(self.store, A, None)
+        with self.assertRaises(ValueError): game.set_focus(self.store, A, game.UNPLACED)
+
+
+class SourceTests(unittest.TestCase):
+    setUp, tearDown, library, activate = GameTests.setUp, GameTests.tearDown, GameTests.library, GameTests.activate
+
+    def test_round_joins_several_sources(self):
+        self.activate('p1', 'p2')
+        game.decide(self.store, A, T1, ['p1'])
+        game.decide(self.store, A, T2, ['p2'])
+        counts = game.overview(self.store, A)['sources']
+        self.assertEqual((counts[game.ALL], counts[game.PENDING], counts[game.UNPLACED], counts['p1'], counts['p2']), (3, 1, 1, 1, 1))
+        round_ = game.set_focus(self.store, A, ['p2', game.UNPLACED])
+        self.assertEqual((round_['name'], sorted(round_['tracks'])), ('Pop + Sem playlist', [T2, T3]))
+        game.decide(self.store, A, T3, ['p2'])
+        self.assertEqual(game.focus(self.store, A)['tracks'], round_['tracks'])   # fixed at the start
+        self.assertEqual(game.queue(self.store, A), [T2])
+        everything = game.set_focus(self.store, A, [game.ALL])
+        self.assertEqual(len(everything['tracks']), 3)
+        self.assertEqual(game.progress(self.store, A)['decided'], 0)
+        for bad in ([], ['zz'], 'zz', [1]):
+            with self.assertRaises((ValueError, TypeError)): game.set_focus(self.store, A, bad)
+
+    def test_round_saved_with_old_format(self):
+        with self.store.connect() as db:
+            game.ensure(self.store)
+            db.execute('INSERT INTO focus VALUES (?,?)', (A, '{"key": "p1", "started": 1, "tracks": ["%s"]}' % T1))
+        self.assertEqual((game.focus(self.store, A)['sources'], game.focus(self.store, A)['name']), (['p1'], 'Rock'))

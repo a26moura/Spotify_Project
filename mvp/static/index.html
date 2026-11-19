@@ -29,12 +29,12 @@
     <div class="screen-head">
       <div>
         <h1 id="playlists-title">Monte suas playlists</h1>
-        <p class="muted">Edite nome e descrição, diga o idioma e o gênero de cada uma e escolha até <b id="max-active">8</b> para o jogo. Idioma e gênero só servem para destacar sugestões no jogo.</p>
+        <p class="muted">Edite nome e descrição, diga o idioma e o gênero de cada uma e marque até <b id="max-active">8</b> como <b>destino no jogo</b>: são os lugares para onde você arrasta as músicas. Depois, em <b>Escolher músicas</b>, você decide quais músicas vai classificar. Idioma e gênero só destacam sugestões.</p>
       </div>
       <div class="head-actions">
         <button id="sync" class="secondary">Sincronizar de novo</button>
         <button id="new-playlist" class="secondary">+ Nova playlist</button>
-        <button id="start-game" class="primary">Começar o jogo →</button>
+        <button id="start-game" class="primary">Escolher músicas →</button>
       </div>
     </div>
     <div class="summary">
@@ -48,7 +48,19 @@
 
   <section id="screen-game" class="screen hidden" aria-labelledby="game-title">
     <h1 id="game-title" class="sr-only">Jogo</h1>
-    <div id="focus-bar" class="focus-bar hidden"><span id="focus-text"></span><button id="focus-off" class="secondary">Jogar com todas as músicas</button></div>
+    <div id="round-setup" class="round-setup hidden">
+      <div>
+        <h1>Quais músicas você quer classificar?</h1>
+        <p class="muted">Marque uma ou mais opções. As músicas escolhidas aparecem uma a uma, mesmo as que você já classificou, e todas as suas playlists ficam como destino.</p>
+      </div>
+      <div class="source-group"><h2>Geral</h2><div id="sources-special" class="sources"></div></div>
+      <div class="source-group"><h2>Músicas que estão nas playlists</h2><div id="sources-playlists" class="sources"></div></div>
+      <div class="head-actions">
+        <button id="setup-cancel" class="secondary hidden">Voltar para a rodada atual</button>
+        <button id="setup-start" class="primary big">Começar →</button>
+      </div>
+    </div>
+    <div id="focus-bar" class="focus-bar hidden"><span id="focus-text"></span><span class="head-actions"><button id="focus-change" class="secondary">Trocar músicas</button></span></div>
     <div class="game-top">
       <div class="progress"><div id="progress-bar"></div></div>
       <span id="progress-text"></span>
@@ -68,6 +80,7 @@
             <p id="card-artists"></p>
             <p id="card-album" class="muted"></p>
             <div id="card-chips" class="chips"></div>
+            <button id="like" class="like" type="button" title="L" aria-pressed="false"><span class="heart" aria-hidden="true">♡</span> Like</button>
             <div class="player">
               <button id="play" class="play" aria-label="Tocar prévia" title="Espaço">▶</button>
               <div class="track-bar"><div id="audio-bar"></div></div>
@@ -83,11 +96,11 @@
       </div>
       <div id="zones-right" class="zones"></div>
     </div>
-    <p class="hint muted">Arraste o cartão até uma playlist ou aperte <kbd>1</kbd>–<kbd>8</kbd>. Clique de novo para tirar. <kbd>Enter</kbd> próxima · <kbd>Espaço</kbd> tocar/pausar · <kbd>S</kbd> pular · <kbd>Ctrl</kbd>+<kbd>Z</kbd> desfazer.</p>
+    <p class="hint muted">Arraste o cartão até uma playlist ou aperte <kbd>1</kbd>–<kbd>8</kbd>. Clique de novo para tirar. <kbd>Enter</kbd> próxima · <kbd>Espaço</kbd> tocar/pausar · <kbd>S</kbd> pular · <kbd>L</kbd> like · <kbd>Ctrl</kbd>+<kbd>Z</kbd> desfazer.</p>
     <div id="game-done" class="done hidden">
-      <h2 id="done-title">Todas as músicas foram distribuídas 🎉</h2>
-      <p class="muted">Confira tudo na prévia antes de gravar no Spotify. As puladas voltam para o fim da fila.</p>
-      <div class="head-actions"><button id="done-all" class="secondary hidden">Jogar com todas as músicas</button><button id="done-preview" class="primary big">Ver a prévia →</button></div>
+      <h2 id="done-title">Rodada concluída 🎉</h2>
+      <p class="muted">Confira tudo na prévia antes de gravar no Spotify, ou escolha outras músicas para classificar.</p>
+      <div class="head-actions"><button id="done-more" class="secondary">Escolher outras músicas</button><button id="done-preview" class="primary big">Ver a prévia →</button></div>
     </div>
     <audio id="player" preload="none"></audio>
   </section>
@@ -113,7 +126,7 @@
 <template id="profile-template">
   <article class="profile">
     <header>
-      <label class="toggle"><input type="checkbox" class="f-active"><span>No jogo</span></label>
+      <label class="toggle"><input type="checkbox" class="f-active"><span>Destino no jogo</span></label>
       <span class="badge"></span>
     </header>
     <label class="field">Nome<input class="f-name" maxlength="100" autocomplete="off"></label>
@@ -126,9 +139,12 @@
       <span class="count"></span>
       <span class="saved muted"></span>
       <button class="text-button f-delete hidden">Apagar</button>
-      <button class="secondary f-focus" title="Rodada só com as músicas desta playlist, para revisar">Jogar só esta</button>
     </footer>
   </article>
+</template>
+
+<template id="source-template">
+  <label class="source"><input type="checkbox"><span class="source-name"></span><span class="source-count"></span></label>
 </template>
 
 <template id="zone-template">

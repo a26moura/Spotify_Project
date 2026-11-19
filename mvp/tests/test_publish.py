@@ -23,7 +23,7 @@ def raw(i): return {'id': tid(i), 'name': f'Song {i:03d}', 'artists': [{'name': 
 class FakeSpotify:
     """Your playlists in memory; records every write."""
     def __init__(self):
-        self.lists = {}; self.items = {}; self.writes = []; self.lose_create = False
+        self.lists = {}; self.items = {}; self.writes = []; self.lose_create = False; self.unliked = []; self.liked = []
     def add(self, ident, name, uris, description=''):
         self.lists[ident] = {'id': ident, 'name': name, 'description': description}; self.items[ident] = list(uris)
     def playlists(self): return [dict(p) for p in self.lists.values()]
@@ -36,6 +36,12 @@ class FakeSpotify:
             self.lists[ident]['public'] = body['public']
             if self.lose_create: self.lose_create = False; raise RemoteError('resposta perdida')
             return {'id': ident}
+        if path.startswith('/me/library?'):
+            from urllib.parse import parse_qs, urlsplit
+            uris = parse_qs(urlsplit(path).query)['uris'][0].split(',')
+            if method == 'DELETE': self.unliked += uris
+            else: self.liked += uris
+            return {}
         ident = path.split('/')[2]
         if method == 'PUT': self.lists[ident].update(body); return {}
         if method == 'POST': self.items[ident] += body['uris']; return {'snapshot_id': 'x'}
@@ -80,7 +86,7 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(items['p2']['rename'], {'from': 'Pop', 'to': 'Pop 2000'})
         self.assertEqual((items[new['key']]['action'], items[new['key']]['describe']), ('create', {'from': '', 'to': 'Para correr'}))
         self.assertEqual(items[empty['key']]['action'], 'skip')
-        self.assertEqual(plan['totals'], {'playlists': 3, 'create': 1, 'add': 3, 'remove': 1})
+        self.assertEqual(plan['totals'], {'playlists': 3, 'create': 1, 'add': 3, 'remove': 1, 'like': 0, 'unlike': 0})
 
     def test_execute_writes_and_next_preview_is_empty(self):
         new = game.create_profile(self.store, A, {'name': 'Treino', 'description': 'Para correr'})
@@ -151,6 +157,66 @@ class RepeatedSongTests(unittest.TestCase):
         self.assertEqual(self.api.items['p2'], ['spotify:track:' + tid(1)])
 
 
+class UnlikeTests(unittest.TestCase):
+    setUp, tearDown, sync = PublishTests.setUp, PublishTests.tearDown, PublishTests.sync
+
+    def test_unlike_goes_through_preview_after_playlists(self):
+        game.decide(self.store, A, tid(1), ['p1'], like=False)     # stays in Rock
+        game.decide(self.store, A, tid(3), [], like=False)         # in no playlist: leaves the app later
+        game.decide(self.store, A, tid(4), ['p2'])
+        self.assertFalse(game.card(self.store, A, tid(1))['like'])
+        game.decide(self.store, A, tid(1), ['p1'])                  # None keeps the earlier choice
+        self.assertIs(game.decisions(self.store, A)[tid(1)]['like'], False)
+        plan = publish.prepare(self.store, A, self.api)
+        self.assertEqual(self.api.writes, [])
+        self.assertEqual([(u['id'], u['stays']) for u in plan['unlike']], [(tid(1), True), (tid(3), False)])
+        self.assertEqual(plan['totals']['unlike'], 2)
+        results = publish.execute(self.store, A, self.api, plan)
+        self.assertEqual(results[-1], {'name': 'Curtidas: saem', 'status': 'Atualizada', 'added': 0, 'removed': 2})
+        self.assertEqual(self.api.writes[-1][0:2], ('DELETE', '/me/library?uris=spotify%3Atrack%3A' + tid(1) + '%2Cspotify%3Atrack%3A' + tid(3)))
+        liked = {t['id']: t['liked'] for t in self.store.tracks(A)}
+        self.assertEqual((liked[tid(1)], liked[tid(3)], liked[tid(2)]), (False, False, True))
+        self.assertNotIn('like', game.decisions(self.store, A)[tid(1)])
+        self.assertEqual(publish.prepare(self.store, A, self.api)['totals']['unlike'], 0)
+
+    def test_unlike_waits_when_a_playlist_fails(self):
+        game.decide(self.store, A, tid(1), [], like=False)
+        game.decide(self.store, A, tid(4), ['p1'])
+        plan = publish.prepare(self.store, A, self.api)
+        self.api.items['p1'].append('spotify:track:' + tid(5))      # Rock changed after the preview
+        results = publish.execute(self.store, A, self.api, plan)
+        self.assertEqual(results[-1]['status'], 'Falha')
+        self.assertEqual(self.api.unliked, [])
+        with self.assertRaises(ValueError): game.decide(self.store, A, tid(1), [], like='sim')
+
+    def test_like_a_song_that_is_only_in_a_playlist(self):
+        self.store.import_tracks(A, [raw(1)], [raw(7)])               # Song 7 is not liked
+        game.decide(self.store, A, tid(7), ['p1'], like=True)
+        game.decide(self.store, A, tid(1), [], like=True)             # already liked: nothing to do
+        self.assertNotIn('like', game.decisions(self.store, A)[tid(1)])
+        self.assertTrue(game.card(self.store, A, tid(7))['like'])
+        plan = publish.prepare(self.store, A, self.api)
+        self.assertEqual(([t['id'] for t in plan['like']], plan['totals']['like'], plan['unlike']), ([tid(7)], 1, []))
+        results = publish.execute(self.store, A, self.api, plan)
+        self.assertEqual(results[-1]['name'], 'Curtidas: entram')
+        self.assertEqual(next(w for w in self.api.writes if w[1].startswith('/me/library'))[:2], ('PUT', '/me/library?uris=spotify%3Atrack%3A' + tid(7)))
+        self.assertTrue(next(t for t in self.store.tracks(A) if t['id'] == tid(7))['liked'])
+
+    def test_old_unlike_choice_still_counts(self):
+        with self.store.connect() as db:
+            db.execute('INSERT INTO decisions VALUES (?,?,?)', (A, tid(2), '{"add": [], "remove": [], "skipped": false, "at": 1, "unlike": true}'))
+        self.assertIs(game.decisions(self.store, A)[tid(2)]['like'], False)
+        self.assertEqual([t['id'] for t in publish.prepare(self.store, A, self.api)['unlike']], [tid(2)])
+
+    def test_unlike_in_chunks_of_40(self):
+        self.store.import_tracks(A, [raw(i) for i in range(1, 90)])
+        for i in range(1, 90): game.decide(self.store, A, tid(i), ['p1'] if i <= 2 else [], like=False)
+        publish.execute(self.store, A, self.api, publish.prepare(self.store, A, self.api))
+        calls = [p for m, p, b in self.api.writes if p.startswith('/me/library')]
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(self.api.unliked), 89)
+
+
 class EmptyDescriptionTests(unittest.TestCase):
     setUp, tearDown, sync = PublishTests.setUp, PublishTests.tearDown, PublishTests.sync
     def test_refused_empty_description_is_only_a_warning(self):
@@ -193,3 +259,23 @@ class PublishEndpointTests(HTTPTests):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class UnlikePermissionTests(HTTPTests):
+    def test_old_login_without_permission_is_asked_to_reconnect(self):
+        account = self.session['account']; store = self.server.STORE
+        self.session['token'] = {'access_token': 'fake', 'scope': 'user-library-read playlist-modify-private'}
+        fake = FakeSpotify(); fake.add('p1', 'Rock', [])
+        store.import_tracks(account, [raw(1)])
+        store.save_spotify_library(account, {'playlists': [{'id': 'p1', 'name': 'Rock', 'description': '', 'tracks': []}], 'synced_at': 1})
+        game.sync_profiles(store, account, [{'id': 'p1', 'name': 'Rock'}])
+        game.update_profile(store, account, 'p1', {'active': True})
+        self.assertEqual(self.post('game-decide', {'id': tid(1), 'playlists': [], 'like': False})[0], 200)
+        with patch.object(Spotify, 'playlists', side_effect=fake.playlists), patch.object(Spotify, 'contents', side_effect=fake.contents):
+            status, result = self.post('publish-preview', {})
+            self.assertEqual(status, 400)
+            self.assertIn('conecte o Spotify de novo', result['error'])
+            self.session['token']['scope'] += ' user-library-modify'
+            status, result = self.post('publish-preview', {})
+            self.assertEqual((status, result['totals']['unlike']), (200, 1))
+        self.assertIn('user-library-modify', self.server.SCOPE)

@@ -49,6 +49,7 @@ class DemoSpotify:
             DemoSpotify.lists[ident] = {'id': ident, 'name': body['name'], 'description': body['description']}
             DemoSpotify.items[ident] = []
             return {'id': ident}
+        if path.startswith('/me/library'): return {}  # tirar das curtidas (simulado)
         ident = path.split('/')[2]
         if method == 'PUT': DemoSpotify.lists[ident].update(body)
         elif method == 'POST': DemoSpotify.items[ident] += body['uris']
