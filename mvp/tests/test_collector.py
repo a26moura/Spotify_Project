@@ -10,7 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from collector import Collector, pending
 from core import Store, record
-from providers import Enricher, RemoteError
+from providers import Enricher, RemoteError, QUICK_VERSION
 from helpers import HTTPTests
 
 A = 'spotify:user'
@@ -21,7 +21,7 @@ PREVIEW = 'https://cdnt-preview.dzcdn.net/api/1/1/a/b/c/0/abc.mp3?hdnea=exp=1~ac
 def deezer(url, cache=True):
     """Fake public APIs: Deezer track/album by ISRC and LRCLIB lyrics."""
     if 'deezer.com/track/isrc:' in url or url.endswith('/track/77'):
-        return {'id': 77, 'bpm': 96.0, 'preview': PREVIEW, 'artist': {'name': 'Artist'}, 'album': {'id': 5, 'title': 'Disco'}}
+        return {'id': 77, 'title': 'Song', 'bpm': 96.0, 'preview': PREVIEW, 'artist': {'name': 'Artist'}, 'album': {'id': 5, 'title': 'Disco'}}
     if 'deezer.com/album/5' in url:
         return {'title': 'Disco', 'genres': {'data': [{'name': 'Reggaeton'}, {'name': 'Latin Music'}]}}
     if 'lrclib.net' in url:
@@ -89,7 +89,7 @@ class CollectorTests(unittest.TestCase):
         class Fake:
             calls = []
             def quick(self, track):
-                self.calls.append(track['id']); return {'genres': ['Rock'], 'quick_checked': True}
+                self.calls.append(track['id']); return {'genres': ['Rock'], 'quick_checked': QUICK_VERSION}
         fake = Fake()
         c = Collector(self.store, fake, threading.RLock(), pause=0)
         self.assertEqual([t['id'] for t in pending(self.store, A)], [T1])

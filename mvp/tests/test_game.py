@@ -145,7 +145,9 @@ class ProfileEndpointTests(HTTPTests):
         self.assertEqual([p['key'] for p in self.get('game')['profiles']], ['p1'])
 
 
-class CardTests(GameTests):
+class CardTests(unittest.TestCase):
+    setUp, tearDown, library, activate = GameTests.setUp, GameTests.tearDown, GameTests.library, GameTests.activate
+
     def test_suggested_by_language_or_genre(self):
         t = {'languages': ['Espanhol'], 'genres': ['Reggaeton'], 'source_labels': []}
         self.assertTrue(game.suggested(t, {'language': 'espanhol'}))
@@ -174,7 +176,7 @@ class CardTests(GameTests):
         self.assertIsNone(done['track']); self.assertEqual(done['remaining'], 0)
 
 
-class GameEndpointTests(ProfileEndpointTests):
+class GameEndpointTests(HTTPTests):
     def test_game_moves(self):
         account = self.session['account']
         store = self.server.STORE
@@ -196,3 +198,49 @@ class GameEndpointTests(ProfileEndpointTests):
         self.assertNotIn(first, game.decisions(store, account))
         self.assertEqual(self.post('game-undo', {})[0], 400)
         self.assertEqual(self.get('game-card?id=' + first)['track']['id'], first)
+
+
+class RepeatedAndFocusTests(unittest.TestCase):
+    tearDown, library, activate = GameTests.tearDown, GameTests.library, GameTests.activate
+
+    def setUp(self):
+        GameTests.setUp(self)
+        # T1 (liked) and T3 (only in a playlist) are the same recording: same ISRC.
+        self.store.import_tracks(A, [raw(T1, external_ids={'isrc': 'BRX000000001'}), raw(T2)], [raw(T3, external_ids={'isrc': 'brx000000001'})])
+        self.library([('p1', 'Rock', [T3]), ('p2', 'Pop', [T2])])
+        self.activate('p1', 'p2')
+
+    def test_same_isrc_is_one_card(self):
+        self.assertEqual(game.aliases(self.store.tracks(A, True)), {T1: T1, T3: T1})
+        self.assertEqual(sorted(game.queue(self.store, A)), [T1, T2])
+        self.assertEqual(game.progress(self.store, A)['total'], 2)
+        c = game.card(self.store, A, T3)
+        self.assertEqual((c['track']['id'], c['track']['versions'], c['in_spotify']), (T1, 2, ['p1']))
+        d = game.decide(self.store, A, T3, ['p2'])          # the other id is accepted too
+        self.assertEqual((d['add'], d['remove']), (['p2'], ['p1']))
+        self.assertIn(T1, game.decisions(self.store, A))
+
+    def test_old_choice_under_other_version_still_counts(self):
+        with self.store.connect() as db:
+            db.execute('INSERT INTO decisions VALUES (?,?,?)', (A, T3, '{"add": ["p2"], "remove": [], "skipped": false, "at": 1}'))
+        self.assertEqual(game.decisions(self.store, A)[T1]['add'], ['p2'])
+        self.assertEqual(game.queue(self.store, A), [T2])
+
+    def test_focus_round_shows_playlist_songs_again(self):
+        game.decide(self.store, A, T1, ['p1'])
+        game.decide(self.store, A, T2, ['p2'])
+        self.assertEqual(game.queue(self.store, A), [])
+        game.update_profile(self.store, A, 'p2', {'active': False})
+        round_ = game.set_focus(self.store, A, 'p2')
+        self.assertTrue(next(p for p in game.profiles(self.store, A) if p['key'] == 'p2')['active'])  # activated
+        self.assertEqual((round_['name'], round_['tracks']), ('Pop', [T2]))
+        self.assertEqual(game.queue(self.store, A), [T2])
+        self.assertEqual(game.progress(self.store, A), {'total': 1, 'decided': 0, 'skipped': 0})
+        game.decide(self.store, A, T2, [])
+        self.assertEqual((game.queue(self.store, A), game.progress(self.store, A)['decided']), ([], 1))
+        self.assertIsNone(game.card(self.store, A)['track'])
+        game.set_focus(self.store, A, None)
+        self.assertIsNone(game.focus(self.store, A))
+        self.assertEqual(game.progress(self.store, A)['total'], 2)
+        with self.assertRaises(ValueError): game.set_focus(self.store, A, 'p2')  # Pop is empty now
+        with self.assertRaises(ValueError): game.set_focus(self.store, A, 'zz')

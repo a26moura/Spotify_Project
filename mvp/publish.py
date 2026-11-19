@@ -30,9 +30,16 @@ def prepare(store, account, api):
     in name and description. Nothing is written."""
     owned = {p['id']: p for p in api.playlists()}
     by_marker = {p.get('description'): p for p in owned.values() if (p.get('description') or '').startswith('Spotify Project ')}
-    tracks = {t['id']: t for t in store.tracks(account, active=True)}
+    cards, alias, members = game.deck(store, account)
+    tracks = {t['id']: t for t in cards}
     done = game.decisions(store, account)
-    describe = lambda ids: [{'id': i, 'title': tracks[i]['title'], 'artists': tracks[i]['artists']} for i in sorted(ids, key=lambda i: (tracks[i]['title'].casefold(), i))]
+    def describe(ids, present=()):
+        # 'uris': what is written; a removal takes out every version of the song in the playlist.
+        rows = []
+        for i in sorted(ids, key=lambda i: (tracks[i]['title'].casefold(), i)):
+            uris = [_uri(m) for m in members.get(i, [i]) if _uri(m) in present] if present else [_uri(i)]
+            rows.append({'id': i, 'title': tracks[i]['title'], 'artists': tracks[i]['artists'], 'uris': uris})
+        return rows
     items = []
     for p in game.profiles(store, account):
         if p.get('missing'): continue
@@ -45,12 +52,12 @@ def prepare(store, account, api):
         if ident and ident not in owned:
             raise ValueError(f'A playlist "{p["name"]}" não está mais na sua conta. Sincronize de novo antes de gravar.')
         live_uris = api.contents(ident) if ident else set()
-        live = _ids(live_uris)
+        live = {alias.get(i, i) for i in _ids(live_uris)}
         add, remove = add - live, remove & live
         spotify = owned.get(ident) or {}
         live_name = html.unescape(spotify.get('name') or '')
         live_description = html.unescape(spotify.get('description') or '')
-        item = {'key': key, 'id': ident, 'name': p['name'], 'add': describe(add), 'remove': describe(remove),
+        item = {'key': key, 'id': ident, 'name': p['name'], 'add': describe(add), 'remove': describe(remove, live_uris),
                 'before': len(live), 'after': len(live | add) - len(remove), 'live': sorted(live_uris), 'rename': None, 'describe': None}
         if not ident:
             item['action'] = 'create' if add else 'skip'
@@ -104,14 +111,14 @@ def execute(store, account, api, plan):
                     # Clearing the temporary description of a new playlist must not block its songs.
                     if body != {'description': ''}: raise
                     warning = 'Não consegui apagar a descrição temporária; edite-a no Spotify se quiser.'
-            add = [_uri(t['id']) for t in item['add'] if _uri(t['id']) not in present]
+            add = [u for t in item['add'] for u in t['uris'] if u not in present]
             for start in range(0, len(add), CHUNK):
                 api.call('/playlists/' + ident + '/items', 'POST', {'uris': add[start:start + CHUNK]})
-            remove = [_uri(t['id']) for t in item['remove'] if _uri(t['id']) in present]
+            remove = [u for t in item['remove'] for u in t['uris'] if u in present]
             for start in range(0, len(remove), CHUNK):
                 api.call('/playlists/' + ident + '/items', 'DELETE', {'items': [{'uri': u} for u in remove[start:start + CHUNK]]})
             game.apply_published(store, account, item['key'], ident, name, profile['description'],
-                                 [t['id'] for t in item['add']], [t['id'] for t in item['remove']])
+                                 [t['id'] for t in item['add']], [u.rsplit(':', 1)[1] for t in item['remove'] for u in t['uris']])
             results.append({'name': name, 'status': 'Criada' if item['action'] == 'create' else 'Atualizada',
                             'added': len(add), 'removed': len(remove), 'url': 'https://open.spotify.com/playlist/' + ident,
                             **({'warning': warning} if warning else {})})

@@ -7,9 +7,11 @@ O jogo não depende de classificação: quem decide a playlist é você. As info
 | Informação | Fonte | Como |
 |---|---|---|
 | Título, artistas, álbum, ano, capa, duração, explícita, data da curtida | Spotify | Na sincronização. A capa vem do endereço do Spotify e não é guardada como imagem. |
-| Gênero do álbum, BPM, id da faixa | Deezer | Pelo ISRC. Só é aceito se o artista principal da faixa estiver entre os artistas do Deezer. Resultado em cache por 30 dias. |
+| Gênero do álbum, BPM, id da faixa | Deezer | Pelo ISRC; se o ISRC não existir no Deezer ou apontar para outra música, busca por título e artista (duração com até 5 s de diferença). Só é aceito se o artista principal estiver entre os artistas do Deezer **e** o título for o mesmo (há distribuidoras que repetem o ISRC em outra música do mesmo artista). Resultado em cache por 30 dias. |
 | Prévia de 30 s | Deezer | Buscada no momento em que o cartão aparece (o link expira) e nunca guardada. |
 | Idioma | LRCLIB + `lyrics_language.py` | A letra é baixada, o idioma é detectado localmente por palavras características e a letra é descartada. Pede pelo menos 30 palavras; mistura de dois idiomas aparece como dois idiomas; "Instrumental" quando o LRCLIB marca a faixa assim. |
+
+Quando a regra de conferência muda, `QUICK_VERSION` (providers.py) sobe e todas as músicas são consultadas de novo na próxima coleta; uma combinação antiga que não confere mais apaga o gênero do álbum, o BPM e o id do Deezer.
 
 A coleta (`collector.py`) roda em segundo plano depois da sincronização, uma música por vez, com espaçamento entre consultas (Deezer 0,25 s, LRCLIB 0,7 s). Músicas cuja fonte falhou temporariamente são tentadas de novo (até 3 passadas, com pausa de 60 s); depois ficam pendentes até a próxima coleta.
 

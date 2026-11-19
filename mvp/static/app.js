@@ -155,6 +155,7 @@ function updateCard(card, p, fields = true) {
   const changed = p.count_after !== p.count ? ` → ${p.count_after} depois do jogo` : '';
   card.querySelector('.count').textContent = `${p.count} músicas${changed}`;
   card.querySelector('.f-delete').classList.toggle('hidden', !!p.spotify_id);
+  card.querySelector('.f-focus').classList.toggle('hidden', !!p.missing || !p.count_after);
   card.querySelector('.counter').textContent = `${card.querySelector('.f-description').value.length}/300`;
 }
 function profileCard(p) {
@@ -182,6 +183,10 @@ function profileCard(p) {
   }
   card.querySelector('.f-description').addEventListener('input', e => { card.querySelector('.counter').textContent = `${e.target.value.length}/300`; });
   card.querySelector('.f-active').addEventListener('change', e => save({active: e.target.checked}));
+  card.querySelector('.f-focus').onclick = () => action(card.querySelector('.f-focus'), async () => {
+    const r = await api('game-focus', {key: p.key}); notify(r.message);
+    await refresh(); go('game');
+  });
   card.querySelector('.f-delete').onclick = () => action(card.querySelector('.f-delete'), async () => {
     if (!confirm(`Apagar a playlist nova "${p.name}" do app? As músicas que você colocou nela saem dela.`)) return;
     const r = await api('profile-delete', {key: p.key}); await refresh(); notify(r.message);
@@ -225,6 +230,11 @@ function showCard(data) {
   const pr = data.progress;
   $('progress-bar').style.width = pr.total ? (100 * pr.decided / pr.total) + '%' : '0';
   $('progress-text').textContent = `${pr.decided} de ${pr.total} distribuídas` + (pr.skipped ? ` · ${pr.skipped} puladas` : '');
+  const f = data.focus;
+  $('focus-bar').classList.toggle('hidden', !f);
+  if (f) $('focus-text').innerHTML = `Rodada só com a playlist <b>${esc(f.name)}</b> (${f.tracks.length} músicas). Tire o que não combina, ou mande para outras.`;
+  $('done-title').textContent = f ? `Revisão de "${f.name}" concluída 🎉` : 'Todas as músicas foram distribuídas 🎉';
+  $('done-all').classList.toggle('hidden', !f);
   const t = data.track;
   $('board').classList.toggle('hidden', !t);
   $('game-done').classList.toggle('hidden', !!t);
@@ -233,7 +243,7 @@ function showCard(data) {
   if (!t) return;
   $('card-title').textContent = t.title;
   $('card-artists').textContent = t.artists.join(', ');
-  $('card-album').textContent = [t.album, t.year].filter(Boolean).join(' · ');
+  $('card-album').textContent = [t.album, t.year].filter(Boolean).join(' · ') + (t.versions > 1 ? ` · ${t.versions} versões no Spotify` : '');
   $('card-cover').classList.toggle('hidden', !t.cover);
   $('card-nocover').classList.toggle('hidden', !!t.cover);
   if (t.cover) $('card-cover').src = t.cover; else $('card-cover').removeAttribute('src');
@@ -329,6 +339,9 @@ $('next').onclick = () => game?.track && move('game-decide', {id: game.track.id,
 $('skip').onclick = () => game?.track && move('game-skip', {id: game.track.id});
 $('undo').onclick = () => move('game-undo', {});
 $('to-preview').onclick = () => go('preview');
+const focusOff = () => move('game-focus', {key: null});
+$('focus-off').onclick = focusOff;
+$('done-all').onclick = focusOff;
 $('done-preview').onclick = () => go('preview');
 
 // Áudio: o link de 30 s do Deezer é buscado na hora (expira) e nunca guardado.

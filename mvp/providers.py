@@ -114,8 +114,17 @@ def title_key(title):
     return ' '.join(re.findall(r'\w+', title))
 
 
+def titles_match(a, b):
+    """Same title, ignoring credits and punctuation; a suffix on one side is allowed
+    ("Song - Remastered" vs "Song")."""
+    ka, kb = title_key(a), title_key(b)
+    return bool(ka and kb) and (ka == kb or ka.startswith(kb + ' ') or kb.startswith(ka + ' '))
+
+
 SPACING = {'api.deezer.com':0.25, 'lrclib.net':0.7}
 # Deezer album genres too broad to stand for a track's genre; kept as labels only.
+# Bump to check every track again (2: the Deezer match also checks the title and falls back to search).
+QUICK_VERSION = 2
 GENERIC_ALBUM_GENRES = {'latin music','brazilian music','world music','films/games','african music','asian music','kids','international pop'}
 USER_AGENT = 'SpotifyProjectLocalPilot/0.1 (personal noncommercial research)'
 
@@ -167,27 +176,47 @@ class Enricher:
                 db.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',(key,json.dumps(data),time.time()+7*86400))
         return data
 
-    def deezer_album_genres(self, track):
-        """Album genres on Deezer for the exact ISRC, when the credited artist matches.
-        Returns None on temporary failure (try again later), else a dict (possibly empty)."""
+    def deezer_match(self, track, data):
+        """A Deezer track is the same song when the main artist is credited and the title matches.
+        Distributors sometimes reuse an ISRC for another song of the same artist."""
+        if not isinstance(data, dict) or data.get('error') or not track.get('artists'): return False
+        names = {norm((data.get('artist') or {}).get('name',''))} | {norm(c.get('name','')) for c in data.get('contributors',[]) or []}
+        return norm(track['artists'][0]) in names and titles_match(track.get('title',''), data.get('title',''))
+
+    def deezer_track(self, track):
+        """The Deezer track for this song: by ISRC, else by searching title and artist (duration within
+        5 s). Returns {} when not found; raises a transient RemoteError when Deezer is busy."""
         isrc = track.get('isrc') or ''
-        if not re.fullmatch(r'[A-Za-z0-9]{12}', isrc) or not track.get('artists'): return {}
-        def compute():
+        if re.fullmatch(r'[A-Za-z0-9]{12}', isrc):
             data = self.get('https://api.deezer.com/track/isrc:'+isrc.upper(), cache=False)
             error = data.get('error') if isinstance(data, dict) else None
-            if error:
-                # Code 4 = quota exceeded: temporary, do not cache.
-                if error.get('code') == 4: raise RemoteError('Deezer: limite de consultas atingido.', transient=True)
-                return {}
-            names = {norm((data.get('artist') or {}).get('name',''))} | {norm(c.get('name','')) for c in data.get('contributors',[]) or []}
+            # Code 4 = quota exceeded: temporary, never cached.
+            if error and error.get('code') == 4: raise RemoteError('Deezer: limite de consultas atingido.', transient=True)
+            if self.deezer_match(track, data): return data
+        if not track.get('title') or not track.get('artists'): return {}
+        query = 'artist:"%s" track:"%s"' % (track['artists'][0].replace('"', ' '), title_key(track['title']))
+        found = self.get('https://api.deezer.com/search?'+urllib.parse.urlencode({'q':query, 'limit':10}), cache=False)
+        if isinstance(found, dict) and (found.get('error') or {}).get('code') == 4: raise RemoteError('Deezer: limite de consultas atingido.', transient=True)
+        seconds = (track.get('duration_ms') or 0) / 1000
+        for item in (found.get('data') or []) if isinstance(found, dict) else []:
+            if self.deezer_match(track, item) and (not seconds or abs((item.get('duration') or 0) - seconds) <= 5):
+                return item
+        return {}
+
+    def deezer_album_genres(self, track):
+        """Album genres, BPM and Deezer id for the same song on Deezer.
+        Returns None on temporary failure (try again later), else a dict (possibly empty)."""
+        if not track.get('artists'): return {}
+        def compute():
+            data = self.deezer_track(track)
             album = (data.get('album') or {}).get('id')
-            if norm(track['artists'][0]) not in names or not album: return {'mismatch':True}
+            if not data or not album: return {'mismatch':True}
             info = self.get('https://api.deezer.com/album/'+str(int(album)), cache=False)
             genres = [g['name'] for g in ((info.get('genres') or {}).get('data') or []) if isinstance(g, dict) and g.get('name')]
             return {'album_id':int(album), 'album':info.get('title') or (data.get('album') or {}).get('title',''), 'genres':list(dict.fromkeys(genres)),
                     'deezer_id':data.get('id'), 'bpm':data.get('bpm') or None}
         try:
-            return self.cached('deezer-isrc2:'+isrc.upper(), 30*86400, compute)
+            return self.cached('deezer-match3:'+(track.get('isrc') or '').upper()+'|'+track.get('id',''), 30*86400, compute)
         except RemoteError as error:
             if error.transient: return None
             return {}
@@ -226,7 +255,13 @@ class Enricher:
         result, complete = {'source_labels':list(track.get('source_labels') or []), 'sources':list(track.get('sources') or [])}, True
         album = self.deezer_album_genres(track)
         if album is None: complete = False
-        elif album.get('deezer_id'):
+        elif not album.get('deezer_id'):
+            # No matching song on Deezer: forget what an earlier, looser match gave.
+            result.update(deezer_id=None, bpm=None)
+            result['source_labels'] = [l for l in result['source_labels'] if l.get('kind') != 'album-genre']
+            result['sources'] = [x for x in result['sources'] if not str(x.get('label','')).startswith('Deezer')]
+            if track.get('genre_origin') == 'album': result.update(genres=[], genre_origin=None)
+        else:
             result.update(deezer_id=album['deezer_id'], bpm=album.get('bpm'))
             url = 'https://www.deezer.com/album/'+str(album['album_id'])
             known = {(l.get('label'), l.get('kind')) for l in result['source_labels']}
@@ -244,18 +279,17 @@ class Enricher:
                 result.update(languages=lyrics['languages'], language_origin='letra')
                 if not any(x.get('level')=='letra' for x in result['sources']):
                     result['sources'].append({'label':'LRCLIB (idioma detectado na letra)','url':'https://lrclib.net/','level':'letra'})
-        if complete: result['quick_checked'] = True
+        if complete: result['quick_checked'] = QUICK_VERSION
         return result
 
     def preview(self, track):
         """30-second Deezer preview URL, fetched on demand and never stored (the link expires)."""
-        if track.get('deezer_id'): path = str(int(track['deezer_id']))
-        elif re.fullmatch(r'[A-Za-z0-9]{12}', track.get('isrc') or ''): path = 'isrc:'+track['isrc'].upper()
-        else: return None
-        data = self.get('https://api.deezer.com/track/'+path, cache=False)
+        if track.get('deezer_id'):
+            data = self.get('https://api.deezer.com/track/'+str(int(track['deezer_id'])), cache=False)
+        elif track.get('quick_checked') == QUICK_VERSION:
+            return None  # already looked up: no matching song on Deezer
+        else:
+            data = self.deezer_track(track) or {}
         if not isinstance(data, dict) or data.get('error'): return None
-        if not track.get('deezer_id'):
-            names = {norm((data.get('artist') or {}).get('name',''))} | {norm(c.get('name','')) for c in data.get('contributors',[]) or []}
-            if not track.get('artists') or norm(track['artists'][0]) not in names: return None
         url = data.get('preview') or ''
         return url if re.fullmatch(r'https://[A-Za-z0-9.-]+\.dzcdn\.net/\S+', url) else None

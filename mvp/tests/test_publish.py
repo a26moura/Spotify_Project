@@ -134,7 +134,25 @@ class PublishTests(unittest.TestCase):
         self.assertEqual([len(b['uris']) for b in posts], [100, 50])
 
 
-class EmptyDescriptionTests(PublishTests):
+class RepeatedSongTests(unittest.TestCase):
+    setUp, tearDown, sync = PublishTests.setUp, PublishTests.tearDown, PublishTests.sync
+    def test_removal_takes_out_every_version_and_add_uses_the_card(self):
+        twin = {'id': tid(9), 'name': 'Song 001', 'artists': [{'name': 'Artist'}], 'external_ids': {'isrc': 'BRX000000001'}}
+        first = dict(raw(1), external_ids={'isrc': 'BRX000000001'})
+        self.store.import_tracks(A, [first] + [raw(i) for i in range(2, 6)], [twin])
+        self.api.items['p1'].append('spotify:track:' + tid(9))   # both versions are in Rock
+        self.sync()
+        game.decide(self.store, A, tid(1), ['p2'])
+        plan = publish.prepare(self.store, A, self.api)
+        rock = next(i for i in plan['items'] if i['key'] == 'p1')
+        self.assertEqual((len(rock['remove']), rock['before'], rock['after']), (1, 2, 1))
+        publish.execute(self.store, A, self.api, plan)
+        self.assertEqual(self.api.items['p1'], ['spotify:track:' + tid(2)])
+        self.assertEqual(self.api.items['p2'], ['spotify:track:' + tid(1)])
+
+
+class EmptyDescriptionTests(unittest.TestCase):
+    setUp, tearDown, sync = PublishTests.setUp, PublishTests.tearDown, PublishTests.sync
     def test_refused_empty_description_is_only_a_warning(self):
         new = game.create_profile(self.store, A, {'name': 'Treino'})
         game.decide(self.store, A, tid(2), [new['key']])

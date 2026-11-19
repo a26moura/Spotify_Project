@@ -7,7 +7,7 @@
    - idioma e gênero ou clima, opcionais, com sugestões tiradas da sua biblioteca;
    - **No jogo**, até 8 playlists.
 
-   Cada mudança é salva no app ao sair do campo. Se você não editou o nome ou a descrição e eles mudaram no Spotify, o app segue o Spotify; o que você editou é mantido. "+ Nova playlist" cria uma playlist só no app, que pode ser apagada enquanto não for gravada. Uma playlist apagada no Spotify aparece como "Não existe mais" e sai do jogo.
+   Cada mudança é salva no app ao sair do campo. Se você não editou o nome ou a descrição e eles mudaram no Spotify, o app segue o Spotify; o que você editou é mantido. **Jogar só esta** abre uma rodada só com as músicas da playlist (inclusive as já decididas), para revisá-la; a playlist entra no jogo se ainda não estiver. "Jogar com todas as músicas" volta ao normal. "+ Nova playlist" cria uma playlist só no app, que pode ser apagada enquanto não for gravada. Uma playlist apagada no Spotify aparece como "Não existe mais" e sai do jogo.
 
 3. **Jogo.**
    - **O cartão:** capa, título, artistas, álbum e ano, gênero e idioma com a origem, outros rótulos das fontes, duração, BPM, explícita, data da curtida ou "Só em playlist".
@@ -19,6 +19,7 @@
      - **Vai sair**: estava e você desmarcou;
      - **Combina**: o idioma ou o gênero da playlist bate com a música.
    - **Teclas:** **Enter** salva e passa para a próxima, **S** pula (a música volta no fim da fila), **Espaço** toca ou pausa, **Ctrl+Z** desfaz e mostra de novo a escolha desfeita.
+   - **Músicas repetidas:** a mesma gravação (mesmo ISRC) com dois ids no Spotify aparece uma vez, com "2 versões no Spotify". Ao tirar a música de uma playlist, todas as versões saem; ao colocar, entra a versão do cartão (a curtida, se houver).
    - **Ordem e andamento:** as músicas com informação aparecem primeiro, agrupadas por idioma, gênero e artista; as que ainda estão sendo consultadas vêm depois. O andamento fica salvo para continuar depois.
 
 4. **Prévia.** Lida do Spotify na hora. Por playlist: o que entra (+), o que sai (−), quantas músicas tinha e quantas vai ter, nome e descrição que mudam, playlists novas (criadas privadas; uma nova sem músicas não é criada). "Gravar no Spotify" mostra um resumo e pede confirmação; remoções não têm desfazer automático.

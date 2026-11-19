@@ -4,6 +4,7 @@ import threading
 import time
 
 import game
+from providers import QUICK_VERSION
 
 RETRY_PAUSE = 60   # seconds to wait before trying again the tracks whose source failed temporarily
 MAX_PASSES = 3
@@ -11,7 +12,7 @@ MAX_PASSES = 3
 
 def pending(store, account):
     order = {ident: i for i, ident in enumerate(game.queue(store, account))}
-    rows = [t for t in store.tracks(account, active=True) if not t.get('quick_checked') and not t.get('review')]
+    rows = [t for t in store.tracks(account, active=True) if t.get('quick_checked') != QUICK_VERSION and not t.get('review')]
     return sorted(rows, key=lambda t: order.get(t['id'], len(order)))
 
 

@@ -13,6 +13,7 @@ import secrets
 import time
 
 from core import norm
+from providers import QUICK_VERSION
 
 MAX_ACTIVE = 8
 NAME_MAX = 100
@@ -24,7 +25,34 @@ def ensure(store):
     with store.connect() as db:
         db.executescript('''CREATE TABLE IF NOT EXISTS profiles(account TEXT, key TEXT, data TEXT NOT NULL, PRIMARY KEY(account,key));
           CREATE TABLE IF NOT EXISTS decisions(account TEXT, track TEXT, data TEXT NOT NULL, PRIMARY KEY(account,track));
-          CREATE TABLE IF NOT EXISTS history(seq INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL, track TEXT NOT NULL, before TEXT);''')
+          CREATE TABLE IF NOT EXISTS history(seq INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL, track TEXT NOT NULL, before TEXT);
+          CREATE TABLE IF NOT EXISTS focus(account TEXT PRIMARY KEY, data TEXT NOT NULL);''')
+
+
+# ---------- músicas repetidas ----------
+
+def aliases(tracks):
+    """Spotify can have the same recording under several ids (single and album, deluxe edition…).
+    Tracks with the same ISRC become one card: every id maps to one canonical id (a liked one
+    first, then the first imported)."""
+    groups = {}
+    for t in tracks:
+        if t.get('isrc'): groups.setdefault(t['isrc'].upper(), []).append(t)
+    result = {}
+    for members in groups.values():
+        canonical = next((t for t in members if t.get('liked', True)), members[0])['id']
+        for t in members: result[t['id']] = canonical
+    return result
+
+
+def deck(store, account):
+    """(canonical playable tracks, alias map, members of each canonical id)."""
+    tracks = store.tracks(account, active=True)
+    alias = aliases(tracks)
+    members = {}
+    for t in tracks: members.setdefault(alias.get(t['id'], t['id']), []).append(t['id'])
+    cards = [t for t in tracks if alias.get(t['id'], t['id']) == t['id'] and t.get('playable', True)]
+    return cards, alias, members
 
 
 # ---------- perfis das playlists ----------
@@ -131,8 +159,9 @@ def delete_profile(store, account, key):
 # ---------- escolhas das músicas ----------
 
 def membership(store, account):
-    """Track ids currently in each playlist profile (by profile key), from the last sync."""
-    lists = {pl['id']: {t['id'] for t in pl.get('tracks', []) if t.get('id')} for pl in store.spotify_library(account).get('playlists', [])}
+    """Canonical track ids currently in each playlist profile (by profile key), from the last sync."""
+    alias = aliases(store.tracks(account, active=True))
+    lists = {pl['id']: {alias.get(t['id'], t['id']) for t in pl.get('tracks', []) if t.get('id')} for pl in store.spotify_library(account).get('playlists', [])}
     return {p['key']: lists.get(p['spotify_id'], set()) for p in profiles(store, account) if p.get('spotify_id')}
 
 
@@ -163,9 +192,17 @@ def apply_published(store, account, key, spotify_id, name, description, added, r
 
 
 def decisions(store, account):
+    """Choices by canonical track id. A choice saved under another version of the same song
+    (before repeated songs were merged) counts for the merged card, unless it has its own."""
     ensure(store)
     with store.connect() as db:
-        return {track: json.loads(data) for track, data in db.execute('SELECT track,data FROM decisions WHERE account=?', (account,))}
+        rows = {track: json.loads(data) for track, data in db.execute('SELECT track,data FROM decisions WHERE account=?', (account,))}
+    alias = aliases(store.tracks(account, active=True))
+    result = {t: d for t, d in rows.items() if alias.get(t, t) == t}
+    for t, d in rows.items():
+        canonical = alias.get(t, t)
+        if canonical != t and canonical not in result: result[canonical] = d
+    return result
 
 
 def marks(track, decision, current, keys):
@@ -181,14 +218,16 @@ def _write(db, account, track, before, after):
 
 
 def _track(store, account, track):
-    if not any(t['id'] == track and t['active'] for t in store.tracks(account)):
-        raise ValueError('Música não encontrada nesta conta.')
+    cards, alias, _ = deck(store, account)
+    track = alias.get(track, track)
+    if not any(t['id'] == track for t in cards): raise ValueError('Música não encontrada nesta conta.')
+    return track
 
 
 def decide(store, account, track, chosen):
     """Save where the track goes among the active playlists. Playlists outside the game keep
     whatever was decided before."""
-    _track(store, account, track)
+    track = _track(store, account, track)
     active = [p['key'] for p in profiles(store, account) if p.get('active')]
     if not isinstance(chosen, list) or any(k not in active for k in chosen):
         raise ValueError('Escolha só playlists ativas no jogo.')
@@ -203,7 +242,7 @@ def decide(store, account, track, chosen):
 
 
 def skip(store, account, track):
-    _track(store, account, track)
+    track = _track(store, account, track)
     before = decisions(store, account).get(track)
     after = dict(before or {'add': [], 'remove': []}, skipped=True, at=time.time())
     with store.connect() as db: _write(db, account, track, before, after)
@@ -225,28 +264,81 @@ def undo(store, account):
     return track, json.loads(undone[0]) if undone else None
 
 
+# ---------- rodada só com uma playlist ----------
+
+def focus(store, account):
+    """The current round limited to one playlist: {'key','name','started','tracks'} or None."""
+    ensure(store)
+    with store.connect() as db:
+        row = db.execute('SELECT data FROM focus WHERE account=?', (account,)).fetchone()
+    if not row: return None
+    data = json.loads(row[0])
+    p = next((p for p in profiles(store, account) if p['key'] == data['key'] and not p.get('missing')), None)
+    return dict(data, name=p['name']) if p else None
+
+
+def set_focus(store, account, key):
+    """Start a round with only the songs that are (or will be) in this playlist, even the ones
+    already decided, so the playlist can be reviewed. key=None ends the round."""
+    ensure(store)
+    if key is None:
+        with store.connect() as db: db.execute('DELETE FROM focus WHERE account=?', (account,))
+        return None
+    rows = {p['key']: p for p in profiles(store, account)}
+    p = rows.get(key)
+    if not p or p.get('missing'): raise ValueError('Playlist não encontrada.')
+    if not p.get('active'):
+        if sum(1 for r in rows.values() if r.get('active')) >= MAX_ACTIVE:
+            raise ValueError(f'Esta playlist precisa estar no jogo: tire outra das {MAX_ACTIVE} ativas antes.')
+        update_profile(store, account, key, {'active': True})
+    cards, _, _ = deck(store, account)
+    current, done = membership(store, account), decisions(store, account)
+    tracks = [t['id'] for t in cards if key in marks(t['id'], done.get(t['id']), current, [key])]
+    if not tracks: raise ValueError('Esta playlist não tem músicas para revisar.')
+    data = {'key': key, 'started': time.time(), 'tracks': tracks}
+    with store.connect() as db: db.execute('INSERT OR REPLACE INTO focus VALUES (?,?)', (account, json.dumps(data)))
+    return focus(store, account)
+
+
+def _pending(cards, done, round_):
+    """Tracks still to show: in a round, its tracks not decided since it started; otherwise the
+    tracks never decided. Skipped ones stay (they go last)."""
+    if round_:
+        ids = set(round_['tracks'])
+        return [t for t in cards if t['id'] in ids and (t['id'] not in done or done[t['id']].get('skipped')
+                or done[t['id']].get('at', 0) < round_['started'])]
+    return [t for t in cards if t['id'] not in done or done[t['id']].get('skipped')]
+
+
 def queue(store, account):
     """Ids of the tracks still to sort, in play order: first those already with genre or language,
     grouped by language, genre and artist (similar cards in a row); then those still without data;
-    skipped tracks go last."""
+    skipped tracks go last. In a one-playlist round, only that playlist's songs."""
     done = decisions(store, account)
-    pending = [t for t in store.tracks(account, active=True) if t.get('playable', True)
-               and (t['id'] not in done or done[t['id']].get('skipped'))]
+    cards, _, _ = deck(store, account)
+    round_ = focus(store, account)
+    pending = _pending(cards, done, round_)
+    started = round_['started'] if round_ else 0
+    skipped = lambda t: bool(done.get(t['id'], {}).get('skipped')) and done[t['id']].get('at', 0) >= started
     def key(t):
         meta = t.get('review') or t
         language = norm((meta.get('languages') or [''])[0])
         genre = norm((meta.get('genres') or [''])[0])
-        return (bool(done.get(t['id'], {}).get('skipped')), not (language or genre),
+        return (skipped(t), not (language or genre),
                 language or '~', genre or '~', norm((t.get('artists') or [''])[0]), norm(t.get('title', '')))
     return [t['id'] for t in sorted(pending, key=key)]
 
 
 def progress(store, account):
-    tracks = [t for t in store.tracks(account, active=True) if t.get('playable', True)]
+    cards, _, _ = deck(store, account)
     done = decisions(store, account)
-    decided = sum(1 for t in tracks if t['id'] in done and not done[t['id']].get('skipped'))
-    return {'total': len(tracks), 'decided': decided,
-            'skipped': sum(1 for t in tracks if done.get(t['id'], {}).get('skipped'))}
+    round_ = focus(store, account)
+    if round_:
+        ids = set(round_['tracks']); cards = [t for t in cards if t['id'] in ids]
+    pending = {t['id'] for t in _pending(cards, done, round_)}
+    started = round_['started'] if round_ else 0
+    return {'total': len(cards), 'decided': len(cards) - len(pending),
+            'skipped': sum(1 for t in cards if t['id'] in pending and done.get(t['id'], {}).get('skipped') and done[t['id']].get('at', 0) >= started)}
 
 
 def overview(store, account):
@@ -254,7 +346,7 @@ def overview(store, account):
     genres and languages seen in the library (suggestions for the profile fields)."""
     current = membership(store, account)
     done = decisions(store, account)
-    tracks = store.tracks(account, active=True)
+    tracks, _, _ = deck(store, account)
     active_ids = {t['id'] for t in tracks}
     rows = []
     for p in profiles(store, account):
@@ -269,7 +361,7 @@ def overview(store, account):
         for l in meta.get('languages') or []: languages[l] = languages.get(l, 0) + 1
     top = lambda counts, n: [k for k, _ in sorted(counts.items(), key=lambda kv: (-kv[1], norm(kv[0])))[:n]]
     return {'profiles': rows, 'max_active': MAX_ACTIVE, 'genres': top(genres, 40), 'languages': top(languages, 20),
-            'progress': progress(store, account)}
+            'progress': progress(store, account), 'focus': focus(store, account)}
 
 
 # ---------- cartão do jogo ----------
@@ -290,14 +382,17 @@ def suggested(track, profile):
 
 def card(store, account, track_id=None, preset=None):
     """The card to show: the given track, or the first one in the queue. None when nothing is left."""
-    rows = {t['id']: t for t in store.tracks(account, active=True)}
+    cards, alias, members = deck(store, account)
+    rows = {t['id']: t for t in cards}
+    if track_id is not None: track_id = alias.get(track_id, track_id)
     if track_id is None:
         order = queue(store, account)
         track_id = order[0] if order else None
         remaining = len(order)
     else:
         remaining = len(queue(store, account))
-    if track_id not in rows: return {'track': None, 'progress': progress(store, account), 'remaining': remaining}
+    round_ = focus(store, account)
+    if track_id not in rows: return {'track': None, 'progress': progress(store, account), 'remaining': remaining, 'focus': round_}
     t = rows[track_id]
     active = [p for p in profiles(store, account) if p.get('active')]
     current = membership(store, account)
@@ -309,11 +404,12 @@ def card(store, account, track_id=None, preset=None):
     info.update(genres=meta.get('genres') or [], languages=meta.get('languages') or [],
                 genre_origin='manual' if t.get('review') else infer_origin(t, 'genre'),
                 language_origin='manual' if t.get('review') else infer_origin(t, 'language'),
-                pending=not t.get('quick_checked') and not t.get('review'),
+                pending=t.get('quick_checked') != QUICK_VERSION and not t.get('review'),
+                versions=len(members.get(track_id, [track_id])),
                 labels=list(dict.fromkeys(l['label'] for l in t.get('source_labels') or [] if l.get('kind') in ('genre', 'album-genre', 'artist-genre')))[:8])
     shown = preset if preset and not preset.get('skipped') else decision
     return {'track': info, 'marks': marks(track_id, shown, current, keys),
             'in_spotify': [k for k in keys if track_id in current.get(k, set())],
             'suggested': [p['key'] for p in active if suggested(t, p)],
             'decided': bool(decision) and not decision.get('skipped'),
-            'progress': progress(store, account), 'remaining': remaining}
+            'progress': progress(store, account), 'remaining': remaining, 'focus': round_}

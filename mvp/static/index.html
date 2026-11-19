@@ -48,6 +48,7 @@
 
   <section id="screen-game" class="screen hidden" aria-labelledby="game-title">
     <h1 id="game-title" class="sr-only">Jogo</h1>
+    <div id="focus-bar" class="focus-bar hidden"><span id="focus-text"></span><button id="focus-off" class="secondary">Jogar com todas as músicas</button></div>
     <div class="game-top">
       <div class="progress"><div id="progress-bar"></div></div>
       <span id="progress-text"></span>
@@ -84,9 +85,9 @@
     </div>
     <p class="hint muted">Arraste o cartão até uma playlist ou aperte <kbd>1</kbd>–<kbd>8</kbd>. Clique de novo para tirar. <kbd>Enter</kbd> próxima · <kbd>Espaço</kbd> tocar/pausar · <kbd>S</kbd> pular · <kbd>Ctrl</kbd>+<kbd>Z</kbd> desfazer.</p>
     <div id="game-done" class="done hidden">
-      <h2>Todas as músicas foram distribuídas 🎉</h2>
+      <h2 id="done-title">Todas as músicas foram distribuídas 🎉</h2>
       <p class="muted">Confira tudo na prévia antes de gravar no Spotify. As puladas voltam para o fim da fila.</p>
-      <button id="done-preview" class="primary big">Ver a prévia →</button>
+      <div class="head-actions"><button id="done-all" class="secondary hidden">Jogar com todas as músicas</button><button id="done-preview" class="primary big">Ver a prévia →</button></div>
     </div>
     <audio id="player" preload="none"></audio>
   </section>
@@ -125,6 +126,7 @@
       <span class="count"></span>
       <span class="saved muted"></span>
       <button class="text-button f-delete hidden">Apagar</button>
+      <button class="secondary f-focus" title="Rodada só com as músicas desta playlist, para revisar">Jogar só esta</button>
     </footer>
   </article>
 </template>

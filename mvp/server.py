@@ -279,6 +279,13 @@ class Handler(BaseHTTPRequestHandler):
         self.invalidate(account)
         return self.send(data=game.card(STORE, account))
 
+    def post_game_focus(self, s, account, data):
+        key = data.get('key')
+        if key is not None and not isinstance(key, str): raise ValueError('Requisição inválida.')
+        round_ = game.set_focus(STORE, account, key)
+        self.invalidate(account)
+        return self.send(data=dict(game.card(STORE, account), message=f'Rodada só com "{round_["name"]}": {len(round_["tracks"])} músicas.' if round_ else 'Rodada com todas as músicas.'))
+
     def post_game_skip(self, s, account, data):
         game.skip(STORE, account, str(data.get('id', '')))
         self.invalidate(account)

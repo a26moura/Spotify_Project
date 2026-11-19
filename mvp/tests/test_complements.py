@@ -27,7 +27,7 @@ class Fake(Enricher):
                 return answer
         raise AssertionError('unexpected '+url)
 
-DEEZER_TRACK={'id':1,'artist':{'name':'Anitta'},'contributors':[{'name':'Anitta'}],'album':{'id':77,'title':'Versions of Me'}}
+DEEZER_TRACK={'id':1,'title':'Envolver','artist':{'name':'Anitta'},'contributors':[{'name':'Anitta'}],'album':{'id':77,'title':'Versions of Me'}}
 LYRICS={'id':5,'trackName':'Envolver','artistName':'Anitta','instrumental':False,'plainLyrics':ES,'syncedLyrics':None}
 
 class ComplementTests(unittest.TestCase):
@@ -38,6 +38,7 @@ class ComplementTests(unittest.TestCase):
     def web(self,**changes):
         web={'https://api.deezer.com/track/isrc:':DEEZER_TRACK,
              'https://api.deezer.com/album/77':{'title':'Versions of Me','genres':{'data':[{'name':'Pop','picture':'x'},{'name':'Latin Music'}]}},
+             'https://api.deezer.com/search':{'data':[]},
              'https://lrclib.net/api/get':LYRICS}
         web.update(changes);return web
 
@@ -94,6 +95,35 @@ class ComplementTests(unittest.TestCase):
         e=Fake(self.store,self.web())
         result=e.quick(dict(TRACK,genres=['funk carioca'],genre_origin='faixa',languages=['Português'],language_origin='faixa'))
         self.assertFalse(any('lrclib' in u for u in e.urls));self.assertNotIn('genre_origin',result);self.assertNotIn('genres',result)
+
+class DeezerMatchTests(unittest.TestCase):
+    setUp, tearDown, web = ComplementTests.setUp, ComplementTests.tearDown, ComplementTests.web
+    def test_isrc_of_another_song_is_rejected_and_search_finds_the_right_one(self):
+        other=dict(DEEZER_TRACK,id=9,title='Outra Música do Mesmo Artista')
+        right={'id':2,'title':'Envolver','duration':194,'artist':{'name':'Anitta'},'album':{'id':77}}
+        wrong_length=dict(right,id=3,duration=250)
+        e=Fake(self.store,self.web(**{'https://api.deezer.com/track/isrc:':other,'https://api.deezer.com/search':{'data':[wrong_length,right]}}))
+        result=e.quick(dict(TRACK))
+        self.assertEqual((result['deezer_id'],result['genres'],result['genre_origin']),(2,['Pop'],'album'))
+
+    def test_no_match_clears_an_old_wrong_album_genre(self):
+        other=dict(DEEZER_TRACK,title='Outra Música')
+        e=Fake(self.store,self.web(**{'https://api.deezer.com/track/isrc:':other}))
+        old=dict(TRACK,deezer_id=9,bpm=100,genres=['Soundtrack'],genre_origin='album',
+                 source_labels=[{'label':'Soundtrack','kind':'album-genre'},{'label':'pop','kind':'artist-genre'}])
+        result=e.quick(old)
+        self.assertEqual((result['deezer_id'],result['bpm'],result['genres'],result['genre_origin']),(None,None,[],None))
+        self.assertEqual([l['label'] for l in result['source_labels']],['pop'])
+        self.assertIsNone(e.preview(dict(old,deezer_id=None,quick_checked=result['quick_checked'])))
+
+    def test_titles_match(self):
+        from providers import titles_match
+        self.assertTrue(titles_match('Vestido Curto - Ao Vivo','Vestido Curto (Ao Vivo)'))
+        self.assertTrue(titles_match('Song - Remastered 2011','Song'))
+        self.assertTrue(titles_match('Song (feat. X)','Song'))
+        self.assertFalse(titles_match('Dear Friend Across The River (The Bridge)','What Could Have Been (from Arcane) (feat. Aloma Steele)'))
+        self.assertFalse(titles_match('Songbird','Song'))
+
 
 class DetectTests(unittest.TestCase):
     def test_languages(self):
