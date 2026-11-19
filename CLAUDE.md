@@ -29,10 +29,10 @@ App local (Python 3, só biblioteca padrão, servidor em mvp/server.py, interfac
 - Próximos passos sugeridos: terminar a etapa 1 (166 pendentes); playlists para Rock/Pop/Inglês (130 músicas com dados sem destino); modo rápido (Deezer/LRCLIB antes do MusicBrainz); filtro "decisões da IA para conferir".
 
 ## Nova abordagem: jogo de arrastar (em andamento desde 19/11/2026)
-- Plano em 6 etapas: 1 dados (feito: game.py com perfis de playlist, escolhas add/remove, desfazer, fila; importação só de playlists próprias + músicas delas sem curtida, liked=False); 2 coleta Deezer/LRCLIB em segundo plano, MusicBrainz desligado; 3 tela "Montar playlists" (até 8 ativas); 4 tela do jogo (cartão, prévia Deezer 30 s, arrastar, atalhos 1–8/Enter/Espaço/Ctrl+Z/S); 5 prévia final + gravação (adiciona e remove, nome/descrição, novas privadas); 6 remover Ollama/critérios/rótulos/recomeçar e atualizar docs.
+- Plano em 6 etapas: 1 dados (feito: game.py com perfis de playlist, escolhas add/remove, desfazer, fila; importação só de playlists próprias + músicas delas sem curtida, liked=False); 2 coleta (feito: collector.py roda Enricher.quick — Deezer/LRCLIB, sem MusicBrainz — numa thread após a sincronização; /api/collect-start, /api/collect-status; /api/preview busca a prévia Deezer na hora, fora do LOCK, sem guardar); 3 tela "Montar playlists" (até 8 ativas); 4 tela do jogo (cartão, prévia Deezer 30 s, arrastar, atalhos 1–8/Enter/Espaço/Ctrl+Z/S); 5 prévia final + gravação (adiciona e remove, nome/descrição, novas privadas); 6 remover Ollama/critérios/rótulos/recomeçar e atualizar docs.
 
 ## Regras
-- Rodar testes: `cd mvp; python -m unittest discover -s tests -v` (127 testes passando).
+- Rodar testes: `cd mvp; python -m unittest discover -s tests -v` (146 testes passando).
 - Interface (19/11): três cartões de etapa no topo (#classify, #organize + #edit-names, #prepare + #spotify-library), playlists, biblioteca e <details id=advanced> com as ferramentas. Botões estão no index.html (nada criado via JS); render() em app.js só atualiza estado.
 - Recomeçar playlist (etapa 2 → #restart): "Só no app" = /api/routing-reset (core.reset_routing tira a decisão do Ollama daquela playlist e marca routing.redo; route-step reavalia só as playlists em redo e junta com core.merge_routing). "Esvaziar no Spotify" = abaixo.
 - Esvaziar playlist: /api/clear-preview + /api/clear-execute, PUT /playlists/{id}/items com uris vazio; recusa se o conteúdo mudou desde a prévia (providers.clear_playlist).

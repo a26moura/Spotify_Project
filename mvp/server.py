@@ -16,6 +16,7 @@ from core import Store, suggest, norm, routing_key, infer_origin, needs_compleme
 from providers import Enricher, RemoteError, Spotify, clear_playlist, execute_plan, prepare_plan, request_json
 from classification import Ollama, merge_metadata, sample_tracks, expanded_rules, missing_reason
 import game
+from collector import Collector
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get('PORT','8765'))
@@ -25,6 +26,7 @@ STORE = Store(os.environ.get('SPOTIFY_PROJECT_DB',str(ROOT/'runtime/app.sqlite3'
 ENRICHER = Enricher(STORE)
 SESSIONS = {}
 LOCK = threading.RLock()
+COLLECTOR = Collector(STORE, ENRICHER, LOCK)
 CONFIG_PATH = Path(os.environ.get('SPOTIFY_PROJECT_CONFIG', str(ROOT/'runtime/config.json')))
 def load_client_id():
     if os.environ.get('SPOTIFY_CLIENT_ID'):
@@ -83,7 +85,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def api(self,s): return Spotify(s,CLIENT_ID,REDIRECT)
 
+    def preview(self):
+        """Deezer preview link for one track. The network call runs outside the global lock so the
+        game stays responsive."""
+        try:
+            with LOCK:
+                if self.headers.get('Host') != f'127.0.0.1:{PORT}': return self.send(403,{'error':'Use '+ORIGIN})
+                s = self.session()
+                ident = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get('id',[''])[0]
+                track = next((t for t in STORE.tracks(s['account'],active=True) if t['id']==ident),None)
+            if not track: return self.send(404,{'error':'Música não encontrada.'})
+            try: url = ENRICHER.preview(track)
+            except RemoteError: url = None
+            return self.send(data={'url':url})
+        except Exception:
+            return self.send(500,{'error':'Falha ao buscar a prévia.'})
+
     def do_GET(self):
+        if urllib.parse.urlsplit(self.path).path == '/api/preview': return self.preview()
         with LOCK:
             try:
                 if self.headers.get('Host') != f'127.0.0.1:{PORT}': return self.send(403,{'error':'Use '+ORIGIN})
@@ -102,6 +121,8 @@ class Handler(BaseHTTPRequestHandler):
                          'ollama_configured':bool(OLLAMA.model), 'ollama_model':OLLAMA.model,
                          'spotify_library':STORE.spotify_library(s['account']), 'needs_sync':bool(s.get('token')) and not s.get('synced',False),
                          'sample_available':False})
+                if url.path == '/api/collect-status':
+                    return self.send(data=COLLECTOR.status(s['account']))
                 if url.path == '/auth/start':
                     if not CLIENT_ID: raise ValueError('Configure o Client ID primeiro.')
                     verifier = secrets.token_urlsafe(64)
@@ -197,6 +218,9 @@ class Handler(BaseHTTPRequestHandler):
                     t['routing_required']=True;t['routing']=result
                     STORE.put(account,t);self.invalidate(account)
                     return self.send(data={'remaining':len(pending)-1,'message':'Playlists avaliadas: '+t['title'],'track':{'id':t['id'],'title':t['title'],'artists':t['artists']},'note':'; '.join(d['playlist']+': '+d['verdict'] for d in result['decisions'])})
+                if path == '/api/collect-start':
+                    started=COLLECTOR.start(account)
+                    return self.send(data=dict(COLLECTOR.status(account),started=started))
                 if path == '/api/sync-start':
                     if not s.get('token'):raise ValueError('Conecte o Spotify para carregar sua biblioteca.')
                     api=self.api(s)
@@ -223,6 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                     STORE.save_spotify_library(account,{'playlists':sync['playlists'],'synced_at':time.time()})
                     game.sync_profiles(STORE,account,[p for p in sync['playlists'] if not p['unavailable']])
                     s['synced']=True;s.pop('sync',None);self.invalidate(account)
+                    COLLECTOR.start(account)
                     return self.send(data={'remaining':0,'message':f'{count} músicas ({len(sync["liked"])} curtidas) e {len(sync["playlists"])} playlists sincronizadas. Classificações anteriores preservadas.'})
                 if path == '/api/adopt-playlist':
                     playlist=next((p for p in STORE.spotify_library(account)['playlists'] if p['id']==data.get('id') and p['owned']),None)

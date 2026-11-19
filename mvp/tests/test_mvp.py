@@ -174,6 +174,11 @@ class Tests(unittest.TestCase):
         with patch.object(api,'call',return_value={'items':[],'next':'https://evil.invalid/token'}):
             with self.assertRaises(RemoteError): api.pages('/me/tracks')
 
+class StubCollector:
+    def __init__(self): self.started=[]
+    def start(self, account): self.started.append(account); return True
+    def status(self, account): return {'running':False,'message':'','remaining':0}
+
 class HTTPTests(unittest.TestCase):
     def test_startup_empty_and_samples_disabled(self):
         self.assertEqual(self.state['tracks'],[])
@@ -195,7 +200,9 @@ class HTTPTests(unittest.TestCase):
         for p in self.patches:p.start()
         self.http=server.ThreadingHTTPServer(('127.0.0.1',0),server.Handler)
         self.port=self.http.server_port
-        self.patches.extend([patch.object(server,'PORT',self.port),patch.object(server,'ORIGIN',f'http://127.0.0.1:{self.port}')])
+        # The background collector never runs in HTTP tests (it would reach the network).
+        self.collector=StubCollector()
+        self.patches.extend([patch.object(server,'PORT',self.port),patch.object(server,'ORIGIN',f'http://127.0.0.1:{self.port}'),patch.object(server,'COLLECTOR',self.collector)])
         for p in self.patches[2:]:p.start()
         self.thread=threading.Thread(target=self.http.serve_forever,daemon=True);self.thread.start()
         with urllib.request.urlopen(f'http://127.0.0.1:{self.port}/api/state') as r:

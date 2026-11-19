@@ -225,9 +225,10 @@ class Enricher:
             if norm(track['artists'][0]) not in names or not album: return {'mismatch':True}
             info = self.get('https://api.deezer.com/album/'+str(int(album)), cache=False)
             genres = [g['name'] for g in ((info.get('genres') or {}).get('data') or []) if isinstance(g, dict) and g.get('name')]
-            return {'album_id':int(album), 'album':info.get('title') or (data.get('album') or {}).get('title',''), 'genres':list(dict.fromkeys(genres))}
+            return {'album_id':int(album), 'album':info.get('title') or (data.get('album') or {}).get('title',''), 'genres':list(dict.fromkeys(genres)),
+                    'deezer_id':data.get('id'), 'bpm':data.get('bpm') or None}
         try:
-            return self.cached('deezer-isrc:'+isrc.upper(), 30*86400, compute)
+            return self.cached('deezer-isrc2:'+isrc.upper(), 30*86400, compute)
         except RemoteError as error:
             if error.transient: return None
             return {}
@@ -257,6 +258,48 @@ class Enricher:
         except RemoteError as error:
             if error.transient: return None
             return {'languages':[], 'found':False}
+
+    def quick(self, track):
+        """Fast lookup for the game, without MusicBrainz: album genre, BPM and Deezer id by ISRC, and
+        the language detected in the LRCLIB lyrics. Fills only what is missing or weaker (genre:
+        faixa wins over album; language: faixa and letra are kept). 'quick_checked' is set only when
+        no source failed temporarily, so the track is tried again later."""
+        result, complete = {'source_labels':list(track.get('source_labels') or []), 'sources':list(track.get('sources') or [])}, True
+        album = self.deezer_album_genres(track)
+        if album is None: complete = False
+        elif album.get('deezer_id'):
+            result.update(deezer_id=album['deezer_id'], bpm=album.get('bpm'))
+            url = 'https://www.deezer.com/album/'+str(album['album_id'])
+            known = {(l.get('label'), l.get('kind')) for l in result['source_labels']}
+            result['source_labels'] += [{'label':g,'kind':'album-genre','source':'Deezer (álbum)','url':url} for g in album['genres'] if (g,'album-genre') not in known]
+            specific = [g for g in album['genres'] if norm(g) not in GENERIC_ALBUM_GENRES]
+            weaker = ORIGIN_RANK.get(infer_origin(track,'genre'),0) < ORIGIN_RANK['album']
+            if album['genres'] and weaker and (specific or not track.get('genres')):
+                result.update(genres=specific or album['genres'], genre_origin='album')
+                if not any(x.get('url')==url for x in result['sources']):
+                    result['sources'].append({'label':'Deezer (álbum: '+(album.get('album') or '?')+')','url':url,'level':'álbum'})
+        if ORIGIN_RANK.get(infer_origin(track,'language'),0) < ORIGIN_RANK['letra']:
+            lyrics = self.lyrics_languages(track)
+            if lyrics is None: complete = False
+            elif lyrics.get('languages'):
+                result.update(languages=lyrics['languages'], language_origin='letra')
+                if not any(x.get('level')=='letra' for x in result['sources']):
+                    result['sources'].append({'label':'LRCLIB (idioma detectado na letra)','url':'https://lrclib.net/','level':'letra'})
+        if complete: result['quick_checked'] = True
+        return result
+
+    def preview(self, track):
+        """30-second Deezer preview URL, fetched on demand and never stored (the link expires)."""
+        if track.get('deezer_id'): path = str(int(track['deezer_id']))
+        elif re.fullmatch(r'[A-Za-z0-9]{12}', track.get('isrc') or ''): path = 'isrc:'+track['isrc'].upper()
+        else: return None
+        data = self.get('https://api.deezer.com/track/'+path, cache=False)
+        if not isinstance(data, dict) or data.get('error'): return None
+        if not track.get('deezer_id'):
+            names = {norm((data.get('artist') or {}).get('name',''))} | {norm(c.get('name','')) for c in data.get('contributors',[]) or []}
+            if not track.get('artists') or norm(track['artists'][0]) not in names: return None
+        url = data.get('preview') or ''
+        return url if re.fullmatch(r'https://[A-Za-z0-9.-]+\.dzcdn\.net/\S+', url) else None
 
     def mb(self, entity, ident='', **params):
         return self.get('https://musicbrainz.org/ws/2/'+entity+'/'+ident+'?'+urllib.parse.urlencode({'fmt':'json',**params}))
