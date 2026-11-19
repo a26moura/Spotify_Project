@@ -33,7 +33,7 @@ App local (Python 3, só biblioteca padrão, servidor em mvp/server.py, interfac
 
 ## Regras
 - Rodar testes: `cd mvp; python -m unittest discover -s tests -v` (159 testes passando).
-- Interface (20/11): telas #screen-connect, #screen-playlists, #screen-game, #screen-preview; cartões de playlist vêm do <template id=profile-template>. Para ver sem conta real: servidor de demonstração com dados fictícios (ver nota da etapa 3 no histórico do Git).
+- Interface (20/11): telas #screen-connect, #screen-playlists, #screen-game, #screen-preview; cartões de playlist vêm do <template id=profile-template>. Para ver sem conta real: `cd mvp; python demo_server.py` (dados fictícios, porta 8799, banco temporário).
 - Recomeçar playlist (etapa 2 → #restart): "Só no app" = /api/routing-reset (core.reset_routing tira a decisão do Ollama daquela playlist e marca routing.redo; route-step reavalia só as playlists em redo e junta com core.merge_routing). "Esvaziar no Spotify" = abaixo.
 - Esvaziar playlist: /api/clear-preview + /api/clear-execute, PUT /playlists/{id}/items com uris vazio; recusa se o conteúdo mudou desde a prévia (providers.clear_playlist).
 - Nunca gravar no Spotify sem prévia e confirmação do usuário; nunca repetir gravações automaticamente.
