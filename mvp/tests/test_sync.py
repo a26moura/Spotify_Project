@@ -2,7 +2,7 @@ from unittest.mock import patch
 from core import record
 from providers import RemoteError, Spotify
 import game
-from test_mvp import HTTPTests, raw, ID1, ID2
+from helpers import HTTPTests, raw, ID1, ID2
 
 class SyncTests(HTTPTests):
     def test_sync_preserves_reviews_and_reads_only_own_playlists(self):
@@ -25,8 +25,7 @@ class SyncTests(HTTPTests):
         snapshot=self.server.STORE.spotify_library(account)
         self.assertEqual(len(snapshot['playlists'][0]['tracks']),2)
         self.assertEqual([p['key'] for p in game.profiles(self.server.STORE,account)],['owned'])
-        self.assertEqual(self.post('adopt-playlist',{'id':'owned'})[0],200)
-        self.assertEqual(self.server.STORE.targets(account),{'Jazz':'owned'})
+        self.assertEqual(self.collector.started,[account])
 
     def test_failed_sync_preserves_library_and_can_resume(self):
         account=self.session['account'];self.session['token']={'access_token':'fake'}

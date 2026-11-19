@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from collector import Collector, pending
 from core import Store, record
 from providers import Enricher, RemoteError
-from test_mvp import HTTPTests
+from helpers import HTTPTests
 
 A = 'spotify:user'
 T1, T2 = 'a' * 22, 'b' * 22

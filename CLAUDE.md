@@ -1,43 +1,32 @@
 # Spotify Project — contexto para o Claude Code
 
-Responda em português. Leia README.md, mvp/README.md, mvp/CLASSIFICACAO.md e mvp/FLUXO.md antes de mudanças grandes.
+Responda em português. Leia README.md, mvp/README.md, mvp/FLUXO.md e mvp/CLASSIFICACAO.md antes de mudanças grandes.
 
 ## O que é
-App local (Python 3, só biblioteca padrão, servidor em mvp/server.py, interface em mvp/static/) que importa curtidas e playlists do Spotify, classifica gênero e idioma, distribui as músicas em playlists com ajuda do Ollama local e grava no Spotify só depois de prévia e confirmação.
+App local (Python 3, só biblioteca padrão; servidor em mvp/server.py, interface em mvp/static/) em forma de jogo: importa curtidas e as playlists próprias do Spotify, busca informações das músicas, mostra uma música por vez com prévia de 30 s, o usuário arrasta para as playlists e, depois de uma prévia final confirmada, o app grava no Spotify.
 
-## Estado atual (16/11/2026)
-- Conta Spotify real conectada (351 curtidas, 7 playlists). Dados em mvp/runtime/app.sqlite3 (pessoal, não publicar).
-- Ollama: modelo qwen3.5:9b (mvp/runtime/metadata.json), escolhido por teste em 18/11 (ver CLASSIFICACAO.md). Chamadas enviam think: false (obrigatório para qwen3.5).
-- Classificação em cadeia, com origem salva por campo (genre_origin / language_origin). Gênero: faixa (MusicBrainz/Wikidata) > album (Deezer por ISRC) > artista (identidade confirmada) > ia. Idioma: faixa > letra (LRCLIB + lyrics_language.py, sem IA) > ia. Ollama só preenche campo vazio. Lógica em providers.py (Enricher), classification.py (merge_metadata) e core.py (infer_origin, ORIGIN_RANK, needs_complements).
-- Filtro por origem na biblioteca (static/app.js: originMatches/originSelector).
-- Dois botões: "1. Classificar músicas" (sync + fontes + Ollama) e "2. Organizar nas playlists" (distribuição Ollama + prévia).
-- Última execução: 118 de 351 consultadas; 88 com gênero (47 faixa, 41 artista); idioma fraco (49). Parou porque o MusicBrainz recusou consultas (limite ~1 req/s por IP). Agora há até 8 pausas automáticas de até 5 min.
+## Estado (20/11/2026)
+- Nova versão (jogo) concluída em 6 etapas em 19–20/11/2026; ainda **não usada na conta real**. Remoção de músicas e limpeza da descrição temporária só foram testadas com Spotify simulado.
+- Conta real: 351 curtidas, 7 playlists. Dados em mvp/runtime/app.sqlite3 (pessoal, não publicar). Informações coletadas na versão anterior (MusicBrainz/Wikidata/Ollama, ~185 músicas) continuam no banco e aparecem nos cartões.
+- A versão anterior (critérios por playlist, distribuição pelo Ollama, rótulos que não contam, recomeçar/esvaziar playlist) foi removida; está no histórico do Git até o commit 8ed6d01.
 
-## Fontes complementares (implementado 16/11/2026, ainda não rodado na conta real)
-- Deezer: gênero do álbum por ISRC. Termos: só uso pessoal/privado/não comercial; não guardar imagens. Público/comercial exige acordo.
-- LRCLIB: idioma detectado localmente na letra; a letra nunca é guardada (licença não declarada).
-- Testes com Enricher que simulam só o MusicBrainz usam Enricher(store, complements=False) para não chamar a rede.
-- Primeira execução real (16/11): 185 de 351 consultadas; gênero 157 (66 faixa, 74 álbum, 17 artista); idioma 177 (72 faixa, 105 letra).
-
-## Correções de 17/11/2026
-- O Ollama não distribui músicas sem gênero/idioma; um "sim" exige dados para o critério da playlist; critérios explícitos sempre valem (core.py: has_evidence, needs_routing, model_may_say_yes, suggest).
-- "funk" sozinho vindo das fontes = Funk Internacional (core.matches_rule). ROUTING_VERSION=2 invalida decisões antigas.
-- Reimportação preserva complements_checked.
-- Regra por playlist exclude_labels ("Rótulos que não contam"): core.excluded_labels; vence critérios e o "sim" do modelo; salva só se preenchida (não muda routing_key das outras).
-- 19/11: critérios de gênero consideram os rótulos de gênero de todas as fontes (core.all_genre_labels), não só o gênero principal; o gênero amplo do álbum no Deezer escondia o "reggaeton"/"trap" do artista.
-- 19/11: gêneros do artista (MusicBrainz + Wikidata) sempre coletados como rótulos artist-genre (marca artist_labels; core.needs_artist_labels reenfileira). Rótulos complementares só contam pela categoria ampla quando ela é única (genre_labels unambiguous=True).
-- Próximos passos sugeridos: terminar a etapa 1 (166 pendentes); playlists para Rock/Pop/Inglês (130 músicas com dados sem destino); modo rápido (Deezer/LRCLIB antes do MusicBrainz); filtro "decisões da IA para conferir".
-
-## Nova abordagem: jogo de arrastar (em andamento desde 19/11/2026)
-- Plano em 6 etapas: 1 dados (feito: game.py com perfis de playlist, escolhas add/remove, desfazer, fila; importação só de playlists próprias + músicas delas sem curtida, liked=False); 2 coleta (feito: collector.py roda Enricher.quick — Deezer/LRCLIB, sem MusicBrainz — numa thread após a sincronização; /api/collect-start, /api/collect-status; /api/preview busca a prévia Deezer na hora, fora do LOCK, sem guardar); 3 tela "Montar playlists" (feito: nova interface em static/ com etapas Conectar/Playlists/Jogo/Prévia; GET /api/game = game.overview; /api/profile-update, profile-create, profile-delete; a interface antiga foi substituída, endpoints antigos continuam até a etapa 6); 4 tela do jogo (feito: game.card/suggested; GET /api/game-card, POST game-decide, game-skip, game-undo — desfazer mostra de novo a escolha desfeita; arrastar com pointer events, não HTML5 DnD; atalhos 1–8/Enter/Espaço/Ctrl+Z/S; CSP libera img i.scdn.co e media *.dzcdn.net; prévia real do Deezer testada no navegador); 5 prévia final + gravação (feito: publish.py prepare/execute; /api/publish-preview guarda a prévia na sessão, uso único; /api/publish-execute recusa playlist que mudou desde a prévia e para na primeira falha; nova playlist criada privada com descrição-marcador para recuperar criação perdida, depois PUT com a sua descrição; remoção = DELETE /playlists/{id}/items {"items":[{"uri"}]}, até 100; escolhas no jogo ou nas playlists invalidam a prévia; demo_server.py tem Spotify simulado); 6 remover Ollama/critérios/rótulos/recomeçar e atualizar docs.
+## Módulos
+- core.py: Store (tracks, cache, spotify_library), record(), import_tracks(items, playlist_items) com liked=False para músicas só em playlist; KEEP_ON_IMPORT preserva informações coletadas; ORIGIN_RANK/infer_origin (gênero faixa > album > artista > ia; idioma faixa > letra > ia); all_genre_labels.
+- game.py: perfis de playlist (tabela profiles; chave = id do Spotify ou "new:..." para criadas no app, ligadas por spotify_id), até 8 ativas; escolhas como {'add','remove'} relativas à cópia da última sincronização (tabela decisions) + history para desfazer; queue, card, suggested ("Combina"), overview, apply_published.
+- collector.py: thread que roda Enricher.quick (Deezer por ISRC: gênero do álbum, BPM, deezer_id; LRCLIB: idioma pela letra) depois da sincronização; 3 passadas.
+- publish.py: prepare (lê o Spotify ao vivo; por playlist add/remove/rename/describe; ação create/update/same/skip) e execute (uma por vez; recusa playlist que mudou desde a prévia; para na primeira falha; nova playlist privada com descrição-marcador para recuperar criação perdida, depois PUT com a descrição do usuário).
+- providers.py: Spotify (library com added_at, playlists próprias, playlist_tracks, contents), Enricher (get com espaçamento/retentativas/cache, deezer_album_genres, lyrics_languages, quick, preview), request_json.
+- server.py: GET /api/game, /api/game-card, /api/collect-status, /api/preview (fora do LOCK), /auth/start, /callback; POST via métodos post_<nome>: config, logout, sync-start/sync-step, collect-start, profile-update/create/delete, game-decide/skip/undo, publish-preview/publish-execute.
+- static/: telas #screen-connect, #screen-playlists, #screen-game, #screen-preview; cartões de playlist do <template id=profile-template>, zonas do <template id=zone-template>; arrastar com pointer events (não HTML5 DnD).
+- demo_server.py: `cd mvp; python demo_server.py` → http://127.0.0.1:8799 com dados fictícios, banco temporário e Spotify simulado (DemoSpotify).
 
 ## Regras
-- Rodar testes: `cd mvp; python -m unittest discover -s tests -v` (200 testes passando).
-- Interface (20/11): telas #screen-connect, #screen-playlists, #screen-game, #screen-preview; cartões de playlist vêm do <template id=profile-template>. Para ver sem conta real: `cd mvp; python demo_server.py` (dados fictícios, porta 8799, banco temporário).
-- Recomeçar playlist (etapa 2 → #restart): "Só no app" = /api/routing-reset (core.reset_routing tira a decisão do Ollama daquela playlist e marca routing.redo; route-step reavalia só as playlists em redo e junta com core.merge_routing). "Esvaziar no Spotify" = abaixo.
-- Esvaziar playlist: /api/clear-preview + /api/clear-execute, PUT /playlists/{id}/items com uris vazio; recusa se o conteúdo mudou desde a prévia (providers.clear_playlist).
-- Nunca gravar no Spotify sem prévia e confirmação do usuário; nunca repetir gravações automaticamente.
-- Revisões manuais têm prioridade sobre qualquer fonte.
+- Rodar testes: `cd mvp; python -m unittest discover -s tests -v` (67 testes passando). Helpers compartilhados em tests/helpers.py (HTTPTests sobe o servidor com banco temporário e coletor simulado).
+- Nunca gravar no Spotify sem prévia e confirmação do usuário; nunca repetir gravações automaticamente. A prévia é de uso único e invalidada por qualquer escolha (Handler.invalidate).
+- Remoção no Spotify: DELETE /playlists/{id}/items com {"items":[{"uri":...}]}, até 100 por requisição.
+- CSP: além de 'self', só img https://i.scdn.co e media https://*.dzcdn.net.
+- Deezer: só uso pessoal/não comercial; não guardar imagens; o link da prévia expira e não é guardado. LRCLIB: a letra nunca é guardada.
+- Revisões manuais (campo review, da versão anterior) têm prioridade sobre qualquer fonte.
 - Commits e PRs sem atribuição ao Claude: não adicionar "Co-Authored-By: Claude" nem "Generated with Claude Code".
-- Usar o Git para histórico (sem pastas de backup). A pesquisa inicial (validação das 40 faixas, exportação, scripts) fica em arquivo/pesquisa-inicial/, fora do Git.
+- Usar o Git para histórico (sem pastas de backup). A pesquisa inicial fica em arquivo/pesquisa-inicial/, fora do Git.
 - Não versionar mvp/runtime/, mvp/data/ nem arquivo/ (dados pessoais; ver .gitignore).

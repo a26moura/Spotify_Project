@@ -13,9 +13,9 @@ class RetryTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory()
         self.store=Store(Path(self.tmp.name)/'test.sqlite3')
-        self.enricher=Enricher(self.store,complements=False)
-        self.url='https://musicbrainz.org/ws/2/recording/?query=test&fmt=json'
-        self.error=RemoteError('MusicBrainz HTTP 503',status=503,transient=True)
+        self.enricher=Enricher(self.store)
+        self.url='https://lrclib.net/api/get?track_name=test'
+        self.error=RemoteError('LRCLIB HTTP 503',status=503,transient=True)
     def tearDown(self):self.tmp.cleanup()
 
     def test_transient_failure_recovers_and_caches(self):
@@ -53,7 +53,7 @@ class RetryTests(unittest.TestCase):
         error=urllib.error.HTTPError(self.url,503,'Busy',{'Retry-After':'7'},io.BytesIO(b'busy'))
         with patch('providers.urllib.request.urlopen',side_effect=error):
             with self.assertRaises(RemoteError) as caught:request_json(self.url)
-        self.assertIn('MusicBrainz',str(caught.exception))
+        self.assertIn('LRCLIB',str(caught.exception))
         self.assertNotIn('grava',str(caught.exception))
         self.assertTrue(caught.exception.transient)
         self.assertEqual(caught.exception.retry_after,7)

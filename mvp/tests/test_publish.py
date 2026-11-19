@@ -9,7 +9,7 @@ import game
 import publish
 from core import Store
 from providers import RemoteError, Spotify
-from test_mvp import HTTPTests
+from helpers import HTTPTests
 
 A = 'spotify:user'
 

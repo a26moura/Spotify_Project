@@ -110,7 +110,7 @@ if __name__ == '__main__':
     unittest.main()
 
 
-from test_mvp import HTTPTests
+from helpers import HTTPTests
 import json as _json
 import urllib.request as _request
 

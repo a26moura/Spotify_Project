@@ -1,29 +1,28 @@
 # Spotify Project
 
-Organizador pessoal que distribui as músicas curtidas no Spotify em playlists por gênero, idioma e outros critérios escolhidos pelo usuário. Roda localmente (Python 3, só biblioteca padrão), classifica com fontes públicas e com um modelo local (Ollama) e só grava no Spotify depois de uma prévia confirmada.
+Organizador pessoal em forma de jogo: as suas músicas aparecem uma a uma, com capa, informações e prévia de 30 s, e você as arrasta para as playlists onde elas combinam. No final, uma prévia mostra o que entra e o que sai de cada playlist, e só depois da sua confirmação o app grava no Spotify. Roda localmente (Python 3, só biblioteca padrão).
 
 ## Como usar
 
-1. Abra `mvp/INICIAR.cmd` (requer Python 3.10+). O navegador abre em http://127.0.0.1:8765.
-2. Conecte o Spotify (OAuth PKCE, só o Client ID; instruções na tela e em [mvp/README.md](mvp/README.md)).
-3. Em **Escolher critérios**, defina cada playlist: nome, descrição, gêneros, idiomas, artistas e rótulos que não contam. Dentro de um campo vale OU; entre campos vale E (ex.: Trap **e** Português). Um rótulo que não conta tira a música da playlist (ex.: `trap latino` em Trap - Br).
-4. **1. Classificar músicas**: sincroniza a conta e preenche gênero e idioma pelas fontes; o Ollama completa só o que ficar vazio.
-5. **2. Organizar nas playlists**: o Ollama decide a participação em cada playlist, com justificativa. Confira a prévia e confirme para criar ou completar as playlists.
+1. Abra `mvp/INICIAR.cmd` (Python 3.10+). O navegador abre em http://127.0.0.1:8765.
+2. **Conectar**: login no Spotify (OAuth PKCE, só o Client ID; instruções na tela e em [mvp/README.md](mvp/README.md)). O app importa as curtidas e as playlists criadas por você, e começa a buscar informações das músicas em segundo plano.
+3. **Playlists**: edite nome e descrição, diga o idioma e o gênero (ou clima) de cada playlist, crie novas e marque até 8 para o jogo.
+4. **Jogo**: arraste o cartão para uma ou mais playlists (ou use as teclas 1–8). Músicas que já estão numa playlist aparecem marcadas; desmarcar significa tirar dela. Enter passa, Espaço toca/pausa, S pula, Ctrl+Z desfaz. O progresso fica salvo.
+5. **Prévia**: confira, por playlist, as músicas que entram e saem e as mudanças de nome e descrição. **Gravar no Spotify** pede confirmação.
 
-O app só adiciona músicas: não remove faixas, não desfaz curtidas e nunca repete uma gravação automaticamente. Suas revisões manuais têm prioridade sobre qualquer fonte.
+O app nunca grava sem prévia confirmada, nunca repete uma gravação automaticamente e não mexe em playlists que mudaram no Spotify depois da prévia. Playlists novas são criadas como privadas. Detalhes do fluxo em [mvp/FLUXO.md](mvp/FLUXO.md).
 
-## Como a classificação funciona
+Para ver o app sem a sua conta: `cd mvp; python demo_server.py` abre http://127.0.0.1:8799 com músicas fictícias e um Spotify simulado.
 
-Cada campo guarda a sua origem, e uma fonte mais forte substitui uma mais fraca:
+## Informações das músicas
 
-| Campo | Ordem de confiança |
+| Informação | De onde vem |
 |---|---|
-| Gênero | faixa (MusicBrainz/Wikidata) > álbum (Deezer, por ISRC) > artista (MusicBrainz, identidade confirmada) > IA (Ollama) |
-| Idioma | faixa (MusicBrainz/Wikidata) > letra (LRCLIB, detecção local sem IA) > IA (Ollama) |
+| Título, artistas, álbum, ano, capa, duração, explícita, data da curtida | Spotify |
+| Gênero do álbum, BPM, prévia de 30 s | Deezer, pelo ISRC (com conferência do artista) |
+| Idioma | Detectado localmente na letra do LRCLIB (a letra não é guardada) |
 
-Os critérios de gênero também consideram os gêneros que cada fonte informou, inclusive os do artista (ex.: "reggaeton" do Bad Bunny no Wikidata), sem trocar o gênero principal.
-
-Na distribuição, o modelo só decide sobre músicas que já têm gênero ou idioma, e um "sim" só vale se a música tiver o dado que a playlist pede. Os critérios explícitos da playlist sempre valem. Detalhes em [mvp/CLASSIFICACAO.md](mvp/CLASSIFICACAO.md).
+O idioma e o gênero da playlist só destacam sugestões no jogo ("Combina"); quem decide é você. Detalhes em [mvp/CLASSIFICACAO.md](mvp/CLASSIFICACAO.md).
 
 ## Estrutura
 
@@ -34,20 +33,21 @@ Spotify_Project/
   mvp/
     INICIAR.cmd          Inicia o servidor local
     server.py            Servidor HTTP local, sessões, OAuth e rotas da API
-    core.py              Regras, critérios, origens e banco SQLite por conta
-    providers.py         Spotify, MusicBrainz, Wikidata, Deezer, LRCLIB, prévia e gravação
-    classification.py    Ollama (classificação e distribuição) e mesclagem por origem
+    core.py              Banco SQLite por conta, importação e origem das informações
+    game.py              Perfis das playlists, escolhas do jogo, desfazer, fila e cartão
+    collector.py         Coleta em segundo plano (Deezer e LRCLIB)
+    publish.py           Prévia final e gravação no Spotify
+    providers.py         Spotify, Deezer e LRCLIB
     lyrics_language.py   Detecção local de idioma pela letra
+    demo_server.py       Demonstração com dados fictícios e Spotify simulado
     static/              Interface (HTML, CSS, JS)
     tests/               Testes automatizados (APIs simuladas)
-    README.md            Instalação, conexão e comportamento de gravação
-    CLASSIFICACAO.md     Cadeia de classificação, fontes e limites
-    FLUXO.md             Fluxo de organização
-    PIPELINE.md          Desenho da pipeline
-    VALIDACAO.md         Histórico de verificações
+    README.md            Instalação, conexão, segurança e gravação
+    CLASSIFICACAO.md     Fontes das informações e limites
+    FLUXO.md             O fluxo do jogo, passo a passo
 ```
 
-Ficam fora do Git (dados pessoais): `mvp/runtime/` (banco, configuração, cache), `mvp/data/` (amostra pessoal) e `arquivo/` (pesquisa inicial: exportação da biblioteca, validação das 40 faixas e scripts exploratórios).
+Ficam fora do Git (dados pessoais): `mvp/runtime/` (banco, configuração, cache), `mvp/data/` e `arquivo/` (pesquisa inicial).
 
 ## Testes
 
@@ -58,17 +58,12 @@ python -m unittest discover -s tests -v
 
 ## Fontes, termos e privacidade
 
-- **Spotify**: modo de desenvolvimento; os termos restringem o uso de conteúdo da plataforma em modelos de IA e o acesso público exige aprovação. [Developer Policy](https://developer.spotify.com/policy), [modos de acesso](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
-- **MusicBrainz**: dados básicos CC0; gêneros e tags CC BY-NC-SA 3.0. Limite de ~1 consulta/s. [Licença](https://musicbrainz.org/doc/About/Data_License).
-- **Wikidata**: CC0. [Licença](https://www.wikidata.org/wiki/Wikidata:Copyright).
-- **Deezer**: API gratuita só para uso pessoal, privado e não comercial; imagens não podem ser armazenadas. O app guarda só ID, título e gêneros do álbum. [Termos](https://developers.deezer.com/termsofuse).
+- **Spotify**: modo de desenvolvimento; o acesso público exige aprovação. [Developer Policy](https://developer.spotify.com/policy), [modos de acesso](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
+- **Deezer**: API gratuita só para uso pessoal, privado e não comercial; imagens não podem ser armazenadas. O app guarda só IDs, título e gêneros do álbum e BPM; o link da prévia é buscado na hora e não é guardado. [Termos](https://developers.deezer.com/termsofuse).
 - **LRCLIB**: não declara licença das letras; o app detecta o idioma e descarta a letra. [Documentação](https://lrclib.net/docs).
-- **Ollama**: modelo local; nenhuma informação vai para serviços de IA externos.
 
 Este projeto é uma ferramenta pessoal e não comercial. Um site público exigiria aprovação do Spotify, acordos com fontes como o Deezer, HTTPS, armazenamento seguro de tokens e política de dados. Não exponha o servidor local na internet.
 
-## Situação (17/11/2026)
+## Histórico
 
-- Conta real conectada (351 curtidas). Primeira execução com as fontes novas: 185 músicas consultadas; 157 com gênero e 177 com idioma.
-- Corrigido: a IA distribuía músicas sem dados adivinhando pelo nome do artista; "funk" vindo das fontes agora é tratado como funk internacional.
-- Próximos passos: terminar a etapa 1 nas músicas pendentes; sugerir playlists para gêneros sem destino (Rock, Pop, Inglês); modo rápido (Deezer/LRCLIB antes do MusicBrainz); filtro "decisões da IA para conferir".
+- Até 19/11/2026 o app classificava com MusicBrainz, Wikidata e Ollama e distribuía as músicas automaticamente por critérios. Essa versão foi substituída pelo jogo (veja o histórico do Git). As informações já coletadas continuam no banco e aparecem nos cartões.
