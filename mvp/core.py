@@ -175,14 +175,27 @@ def suggest(track, names, rules=None):
         return [n for n in names if n in yes or n in matched]
     return matched
 
-def record(raw):
+def cover_url(album):
+    """Smallest album image that is at least 300 px wide (good for the card), else the largest one."""
+    images = [i for i in (album or {}).get('images') or [] if isinstance(i, dict) and i.get('url')]
+    if not images: return None
+    wide = [i for i in images if (i.get('width') or 0) >= 300]
+    pick = min(wide, key=lambda i: i['width']) if wide else max(images, key=lambda i: i.get('width') or 0)
+    return pick['url']
+
+def record(raw, liked=True):
     ident = raw.get('id') or track_id(raw.get('url', ''))
     if not ident or not re.fullmatch(r'[A-Za-z0-9]{22}', ident): return None
     artists = [a['name'] if isinstance(a, dict) else a for a in raw.get('artists', [])]
+    album = raw.get('album') if isinstance(raw.get('album'), dict) else {}
+    year = (album.get('release_date') or '')[:4]
     return {'id': ident, 'title': raw.get('name') or raw.get('title', ''), 'artists': artists,
             'uri': 'spotify:track:' + ident, 'url': 'https://open.spotify.com/track/' + ident,
-            'isrc': raw.get('external_ids', {}).get('isrc'), 'genres': [], 'languages': [],
+            'isrc': (raw.get('external_ids') or {}).get('isrc'), 'genres': [], 'languages': [],
             'duration_ms': raw.get('duration_ms'),
+            'album': album.get('name') or '', 'year': int(year) if year.isdigit() else None,
+            'cover': cover_url(album), 'explicit': bool(raw.get('explicit')),
+            'liked': liked, 'added_at': raw.get('added_at') if liked else None,
             'sources': [], 'lookup': 'pending', 'review': None, 'active': True,
             'playable': raw.get('is_playable', True) and not raw.get('is_local', False)}
 
@@ -298,12 +311,16 @@ class Store:
         with self.connect() as db:
             db.execute('INSERT OR REPLACE INTO tracks VALUES (?,?,?)', (account, item['id'], json.dumps(item)))
 
-    def import_tracks(self, account, items):
+    def import_tracks(self, account, items, playlist_items=()):
+        """Liked tracks plus tracks that are only in your own playlists (liked=False).
+        Tracks in neither become inactive; their data is kept for a later import."""
         old = {t['id']: t for t in self.tracks(account)}
         found = {}
-        for item in items:
-            t = record(item)
-            if not t: continue
+        liked_ids = {record(i)['id'] for i in items if record(i)}
+        extra = [i for i in playlist_items if (r := record(i)) and r['id'] not in liked_ids]
+        for item, liked in [(i, True) for i in items] + [(i, False) for i in extra]:
+            t = record(item, liked)
+            if not t or t['id'] in found: continue
             if t['id'] in old:
                 previous = old[t['id']]
                 for key in ['review', 'genres', 'languages', 'sources', 'lookup', 'lookup_note', 'artist_genres', 'classification_source', 'classification_level', 'source_labels', 'labels_collected', 'routing_required', 'routing', 'genre_origin', 'language_origin', 'artist_checked', 'ai_checked', 'complements_checked', 'artist_labels']:

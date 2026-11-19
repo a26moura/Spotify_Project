@@ -15,6 +15,7 @@ import urllib.parse
 from core import Store, suggest, norm, routing_key, infer_origin, needs_complements, needs_artist_labels, needs_routing, has_evidence, reset_routing, merge_routing
 from providers import Enricher, RemoteError, Spotify, clear_playlist, execute_plan, prepare_plan, request_json
 from classification import Ollama, merge_metadata, sample_tracks, expanded_rules, missing_reason
+import game
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get('PORT','8765'))
@@ -200,29 +201,29 @@ class Handler(BaseHTTPRequestHandler):
                     if not s.get('token'):raise ValueError('Conecte o Spotify para carregar sua biblioteca.')
                     api=self.api(s)
                     liked=api.library()
-                    playlists=api.all_playlists()
-                    s['sync']={'id':secrets.token_urlsafe(24),'liked':liked,'queue':playlists,'playlists':[], 'expires':time.time()+3600}
+                    playlists=api.playlists()  # only your own playlists
+                    s['sync']={'id':secrets.token_urlsafe(24),'liked':liked,'queue':playlists,'playlists':[],'extra':[], 'expires':time.time()+3600}
                     return self.send(data={'id':s['sync']['id'],'remaining':len(playlists),'message':f'{len(liked)} curtidas carregadas. Lendo {len(playlists)} playlists…'})
                 if path == '/api/sync-step':
                     sync=s.get('sync')
                     if not s.get('token') or not sync or sync['expires']<time.time() or not secrets.compare_digest(sync['id'],str(data.get('id',''))):raise ValueError('Sincronização expirada. Inicie novamente.')
                     if sync['queue']:
                         p=sync['queue'][0]
-                        owned=p.get('owner',{}).get('id')==account
-                        entry={'id':p['id'],'name':p.get('name','Playlist'),'description':p.get('description',''),'owned':owned,'tracks':[],'unavailable':False}
-                        if owned or p.get('collaborative'):
-                            try:
-                                entry['tracks']=[{'id':t.get('id'),'uri':t.get('uri'),'title':t.get('name',''),'artists':[a['name'] for a in t.get('artists',[])]} for t in self.api(s).playlist_tracks(p['id'])]
-                            except RemoteError as error:
-                                if error.status not in (403,404):raise
-                                entry['unavailable']=True
-                        else:entry['unavailable']=True
+                        entry={'id':p['id'],'name':p.get('name','Playlist'),'description':p.get('description') or '','snapshot_id':p.get('snapshot_id'),'owned':True,'tracks':[],'unavailable':False}
+                        try:
+                            items=self.api(s).playlist_tracks(p['id'])
+                            entry['tracks']=[{'id':t.get('id'),'uri':t.get('uri'),'title':t.get('name',''),'artists':[a['name'] for a in t.get('artists',[])]} for t in items]
+                            sync['extra'].extend(items)
+                        except RemoteError as error:
+                            if error.status not in (403,404):raise
+                            entry['unavailable']=True
                         sync['playlists'].append(entry);sync['queue'].pop(0)
                     if sync['queue']:return self.send(data={'remaining':len(sync['queue']),'message':f'Playlists carregadas: {len(sync["playlists"])}. Restantes: {len(sync["queue"])}.'})
-                    count=STORE.import_tracks(account,sync['liked'])
+                    count=STORE.import_tracks(account,sync['liked'],sync['extra'])
                     STORE.save_spotify_library(account,{'playlists':sync['playlists'],'synced_at':time.time()})
+                    game.sync_profiles(STORE,account,[p for p in sync['playlists'] if not p['unavailable']])
                     s['synced']=True;s.pop('sync',None);self.invalidate(account)
-                    return self.send(data={'remaining':0,'message':f'{count} curtidas e {len(sync["playlists"])} playlists sincronizadas. Classificações e revisões anteriores preservadas.'})
+                    return self.send(data={'remaining':0,'message':f'{count} músicas ({len(sync["liked"])} curtidas) e {len(sync["playlists"])} playlists sincronizadas. Classificações anteriores preservadas.'})
                 if path == '/api/adopt-playlist':
                     playlist=next((p for p in STORE.spotify_library(account)['playlists'] if p['id']==data.get('id') and p['owned']),None)
                     if not playlist:raise ValueError('Sincronize e escolha uma playlist da sua conta.')

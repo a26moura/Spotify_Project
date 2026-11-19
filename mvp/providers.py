@@ -90,7 +90,7 @@ class Spotify:
             else: path = None
         return result
 
-    def library(self): return [r['track'] for r in self.pages('/me/tracks?limit=50') if r and r.get('track')]
+    def library(self): return [dict(r['track'], added_at=r.get('added_at')) for r in self.pages('/me/tracks?limit=50') if r and r.get('track')]
     def playlists(self): return [p for p in self.pages('/me/playlists?limit=50') if p and p.get('owner',{}).get('id')==self.session['account']]
 
     def all_playlists(self):
