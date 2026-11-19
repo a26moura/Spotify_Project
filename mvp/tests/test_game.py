@@ -107,3 +107,38 @@ class GameTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+from test_mvp import HTTPTests
+import json as _json
+import urllib.request as _request
+
+
+class ProfileEndpointTests(HTTPTests):
+    def get(self, path):
+        with _request.urlopen(_request.Request(f'http://127.0.0.1:{self.port}/api/' + path, headers={'Cookie': self.cookie})) as r:
+            return _json.load(r)
+
+    def test_overview_and_profile_endpoints(self):
+        account = self.session['account']
+        store = self.server.STORE
+        store.import_tracks(account, [raw(T1)], [raw(T2)])
+        lists = [{'id': 'p1', 'name': 'Rock', 'description': '', 'tracks': [{'id': T1}, {'id': T2}]}]
+        store.save_spotify_library(account, {'playlists': lists, 'synced_at': 5})
+        game.sync_profiles(store, account, lists)
+        data = self.get('game')
+        self.assertEqual((data['synced_at'], data['max_active'], data['progress']['total']), (5, 8, 2))
+        self.assertEqual([(p['key'], p['count'], p['count_after']) for p in data['profiles']], [('p1', 2, 2)])
+        status, r = self.post('profile-update', {'key': 'p1', 'fields': {'active': True, 'language': 'Inglês'}})
+        self.assertEqual(status, 200, r)
+        self.assertEqual(self.post('profile-update', {'key': 'p1', 'fields': {'name': ''}})[0], 400)
+        self.assertEqual(self.post('profile-update', {'key': 'p1', 'fields': 'x'})[0], 400)
+        status, r = self.post('profile-create', {'fields': {'name': 'Treino'}})
+        self.assertEqual(status, 200, r)
+        new = r['profile']['key']
+        game.decide(store, account, T1, [new])
+        rows = {p['key']: p for p in self.get('game')['profiles']}
+        self.assertEqual((rows['p1']['count_after'], rows[new]['count_after']), (1, 1))
+        self.assertEqual(self.post('profile-delete', {'key': 'p1'})[0], 400)
+        self.assertEqual(self.post('profile-delete', {'key': new})[0], 200)
+        self.assertEqual([p['key'] for p in self.get('game')['profiles']], ['p1'])

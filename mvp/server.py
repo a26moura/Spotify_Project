@@ -121,6 +121,11 @@ class Handler(BaseHTTPRequestHandler):
                          'ollama_configured':bool(OLLAMA.model), 'ollama_model':OLLAMA.model,
                          'spotify_library':STORE.spotify_library(s['account']), 'needs_sync':bool(s.get('token')) and not s.get('synced',False),
                          'sample_available':False})
+                if url.path == '/api/game':
+                    a=s['account']; library=STORE.spotify_library(a)
+                    return self.send(data=dict(game.overview(STORE,a),account=a,display_name=s.get('display_name','Piloto local'),connected=bool(s.get('token')),
+                        configured=bool(CLIENT_ID),redirect=REDIRECT,csrf=s['csrf'],needs_sync=bool(s.get('token')) and not s.get('synced',False),
+                        synced_at=library.get('synced_at'),collect=COLLECTOR.status(a)))
                 if url.path == '/api/collect-status':
                     return self.send(data=COLLECTOR.status(s['account']))
                 if url.path == '/auth/start':
@@ -218,6 +223,17 @@ class Handler(BaseHTTPRequestHandler):
                     t['routing_required']=True;t['routing']=result
                     STORE.put(account,t);self.invalidate(account)
                     return self.send(data={'remaining':len(pending)-1,'message':'Playlists avaliadas: '+t['title'],'track':{'id':t['id'],'title':t['title'],'artists':t['artists']},'note':'; '.join(d['playlist']+': '+d['verdict'] for d in result['decisions'])})
+                if path == '/api/profile-update':
+                    if not isinstance(data.get('fields'),dict):raise ValueError('Requisição inválida.')
+                    p=game.update_profile(STORE,account,str(data.get('key','')),data['fields'])
+                    return self.send(data={'profile':p,'message':'Playlist atualizada. Nada foi gravado no Spotify ainda.'})
+                if path == '/api/profile-create':
+                    if not isinstance(data.get('fields'),dict):raise ValueError('Requisição inválida.')
+                    p=game.create_profile(STORE,account,data['fields'])
+                    return self.send(data={'profile':p,'message':'Playlist "'+p['name']+'" criada no app. Ela só vai para o Spotify depois da prévia final.'})
+                if path == '/api/profile-delete':
+                    game.delete_profile(STORE,account,str(data.get('key','')))
+                    return self.send(data={'message':'Playlist nova apagada do app.'})
                 if path == '/api/collect-start':
                     started=COLLECTOR.start(account)
                     return self.send(data=dict(COLLECTOR.status(account),started=started))

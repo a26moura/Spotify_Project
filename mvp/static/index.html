@@ -1,61 +1,86 @@
 <!doctype html>
 <html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Spotify Project · Organize suas curtidas</title><link rel="stylesheet" href="/style.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Spotify Project · Organize jogando</title><link rel="stylesheet" href="/style.css"></head>
 <body>
-<a class="skip-link" href="#library">Ir para as músicas</a>
 <header class="topbar">
   <a class="brand" href="/" aria-label="Spotify Project, início"><span class="brand-icon" aria-hidden="true">≋</span><span>Spotify Project<small id="mode">Sem conexão</small></span></a>
-  <div class="account"><span class="avatar" aria-hidden="true">♪</span><span id="account-name">Carregando…</span><button id="connect" class="primary">Conectar Spotify ↗</button><button id="logout" class="text-button hidden">Desconectar</button></div>
+  <nav class="stepper" aria-label="Etapas">
+    <button data-go="connect" class="stage"><span>1</span>Conectar</button>
+    <button data-go="playlists" class="stage"><span>2</span>Playlists</button>
+    <button data-go="game" class="stage"><span>3</span>Jogo</button>
+    <button data-go="preview" class="stage"><span>4</span>Prévia</button>
+  </nav>
+  <div class="account"><span id="account-name">Carregando…</span><button id="logout" class="text-button hidden">Desconectar</button></div>
 </header>
+
 <main>
-  <section class="steps" aria-label="Etapas da organização">
-    <article class="step">
-      <span class="step-number">1</span>
-      <div class="step-body"><h2>Classificar músicas</h2><p>Sincroniza curtidas e playlists, busca gênero e idioma nas fontes e completa o que faltar com o Ollama.</p><p class="step-status" id="step1-status"></p></div>
-      <div class="step-actions"><button id="classify" class="primary">Classificar músicas</button></div>
-    </article>
-    <article class="step">
-      <span class="step-number">2</span>
-      <div class="step-body"><h2>Organizar nas playlists</h2><p>O Ollama decide os destinos pelos critérios de cada playlist. Nada é gravado nesta etapa.</p><p class="step-status" id="step2-status"></p></div>
-      <div class="step-actions"><button id="organize" class="primary">Organizar nas playlists</button><button id="edit-names" class="secondary">Editar playlists e critérios</button><button id="restart" class="secondary">Recomeçar uma playlist</button></div>
-    </article>
-    <article class="step">
-      <span class="step-number">3</span>
-      <div class="step-body"><h2>Salvar no Spotify</h2><p>Mostra a prévia das músicas a adicionar e só grava depois da sua confirmação.</p><p class="step-status" id="step3-status"></p></div>
-      <div class="step-actions"><button id="prepare" class="primary">Revisar e salvar</button><button id="spotify-library" class="secondary">Playlists do Spotify</button></div>
-    </article>
-  </section>
+  <p id="notice" role="status" aria-live="polite"></p>
 
-  <div id="notice" role="status" aria-live="polite">Carregando biblioteca…</div>
-  <section id="classification-progress" class="progress-panel hidden" aria-label="Progresso"><div class="progress-head"><strong id="classification-count"></strong><span id="classification-eta" role="status"></span><button id="stop-progress" class="secondary hidden">Parar</button></div><progress id="classification-bar" max="1" value="0" aria-label="Músicas processadas"></progress><p id="classification-current" role="status"></p><details><summary>Log (últimos 100 eventos)</summary><pre id="classification-log" class="classification-log"></pre></details></section>
-
-  <section class="playlists" aria-labelledby="playlists-title">
-    <div class="section-heading"><h2 id="playlists-title">Suas playlists</h2><dl class="stats"><div><dt>Músicas</dt><dd id="total">—</dd></div><div><dt>Com destino</dt><dd id="assigned">—</dd></div><div><dt>Sem destino</dt><dd id="missing">—</dd></div><div><dt>Playlists</dt><dd id="playlist-count">—</dd></div></dl></div>
-    <div id="playlist-cards" class="playlist-cards"></div>
-  </section>
-
-  <section id="library" class="library" aria-labelledby="view-title">
-    <div class="section-heading"><div><h2 id="view-title">Todas as músicas</h2><p id="view-subtitle"></p></div></div>
-    <div class="filter-row">
-      <select id="view-select" aria-label="Mostrar"></select>
-      <select id="origin-filter" aria-label="Filtrar pela origem da classificação"></select>
-      <label class="search"><span aria-hidden="true">⌕</span><input id="search" placeholder="Buscar música ou artista…" aria-label="Buscar música ou artista"></label>
-      <span id="visible-count"></span>
+  <section id="screen-connect" class="screen" aria-labelledby="connect-title">
+    <div class="hero">
+      <h1 id="connect-title">Organize suas músicas jogando</h1>
+      <p>Conecte o Spotify, escolha as playlists e vá arrastando cada música para onde ela combina. Nada é gravado no Spotify antes da prévia final e da sua confirmação.</p>
+      <button id="connect" class="primary big">Conectar Spotify ↗</button>
+      <p class="muted">O app lê suas curtidas e as playlists criadas por você. Playlists que você só segue não entram.</p>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Música / artista</th><th>Gênero / idioma</th><th>Destino</th><th>Situação</th></tr></thead><tbody id="tracks"></tbody></table><div id="empty" class="empty hidden"><h3>Nenhuma música por aqui.</h3><p>Conecte o Spotify e classifique suas curtidas. Se já fez isso, confira os filtros.</p></div></div>
-    <nav class="pagination" aria-label="Páginas da biblioteca"><button id="previous-page" class="secondary">← Anterior</button><span id="page-info" role="status"></span><button id="next-page" class="secondary">Próxima →</button><label>Por página <select id="page-size"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option></select></label></nav>
   </section>
 
-  <details class="advanced" id="advanced">
-    <summary>Ferramentas avançadas <small>etapas separadas, modelo Ollama e testes</small></summary>
-    <div class="advanced-grid">
-      <div><h3>Conta</h3><button id="import" class="secondary">Sincronizar conta e playlists</button></div>
-      <div><h3>Etapa 1 em partes</h3><button id="collect-labels" class="secondary">Buscar rótulos nos sites</button><button id="ai-fill" class="secondary">Completar gênero/idioma com Ollama</button><button id="retry-classification" class="secondary">Tentar de novo sem classificação</button></div>
-      <div><h3>Etapa 2 em partes</h3><button id="route-local" class="secondary">Só distribuir com Ollama (sem prévia)</button></div>
-      <div><h3>Ollama e testes</h3><button id="sources" class="secondary">Modelo Ollama e teste de 30 músicas</button><button id="about" class="text-button">Como as sugestões funcionam</button></div>
+  <section id="screen-playlists" class="screen hidden" aria-labelledby="playlists-title">
+    <div class="screen-head">
+      <div>
+        <h1 id="playlists-title">Monte suas playlists</h1>
+        <p class="muted">Edite nome e descrição, diga o idioma e o gênero de cada uma e escolha até <b id="max-active">8</b> para o jogo. Idioma e gênero só servem para destacar sugestões no jogo.</p>
+      </div>
+      <div class="head-actions">
+        <button id="sync" class="secondary">Sincronizar de novo</button>
+        <button id="new-playlist" class="secondary">+ Nova playlist</button>
+        <button id="start-game" class="primary">Começar o jogo →</button>
+      </div>
     </div>
-  </details>
+    <div class="summary">
+      <span id="active-count"></span>
+      <span id="library-count"></span>
+      <span id="collect-status"></span>
+    </div>
+    <div id="profiles" class="profiles"></div>
+    <p id="no-profiles" class="empty hidden">Nenhuma playlist sua foi encontrada. Crie uma nova para começar.</p>
+  </section>
+
+  <section id="screen-game" class="screen hidden" aria-labelledby="game-title">
+    <h1 id="game-title">Jogo</h1>
+    <p class="muted">Em construção (etapa 4).</p>
+  </section>
+
+  <section id="screen-preview" class="screen hidden" aria-labelledby="preview-title">
+    <h1 id="preview-title">Prévia</h1>
+    <p class="muted">Em construção (etapa 5).</p>
+  </section>
 </main>
+
+<template id="profile-template">
+  <article class="profile">
+    <header>
+      <label class="toggle"><input type="checkbox" class="f-active"><span>No jogo</span></label>
+      <span class="badge"></span>
+    </header>
+    <label class="field">Nome<input class="f-name" maxlength="100" autocomplete="off"></label>
+    <label class="field">Descrição<textarea class="f-description" maxlength="300" rows="2"></textarea><small class="counter"></small></label>
+    <div class="pair">
+      <label class="field">Idioma<input class="f-language" list="languages" maxlength="50" placeholder="ex.: Português" autocomplete="off"></label>
+      <label class="field">Gênero ou clima<input class="f-genre" list="genres" maxlength="50" placeholder="ex.: funk, treino" autocomplete="off"></label>
+    </div>
+    <footer>
+      <span class="count"></span>
+      <span class="saved muted"></span>
+      <button class="text-button f-delete hidden">Apagar</button>
+    </footer>
+  </article>
+</template>
+
+<datalist id="languages"></datalist>
+<datalist id="genres"></datalist>
+
 <dialog id="dialog"><div class="dialog-header"><h2 id="dialog-title"></h2><button id="close-dialog" aria-label="Fechar">×</button></div><div id="dialog-body"></div></dialog>
-<script src="/app.js" defer></script>
-</body></html>
+<script src="/app.js"></script>
+</body>
+</html>

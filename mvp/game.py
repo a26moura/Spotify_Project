@@ -218,3 +218,26 @@ def progress(store, account):
     decided = sum(1 for t in tracks if t['id'] in done and not done[t['id']].get('skipped'))
     return {'total': len(tracks), 'decided': decided,
             'skipped': sum(1 for t in tracks if done.get(t['id'], {}).get('skipped'))}
+
+
+def overview(store, account):
+    """Profiles with how many tracks each one has now and will have after the game, plus the
+    genres and languages seen in the library (suggestions for the profile fields)."""
+    current = membership(store, account)
+    done = decisions(store, account)
+    tracks = store.tracks(account, active=True)
+    active_ids = {t['id'] for t in tracks}
+    rows = []
+    for p in profiles(store, account):
+        key = p['key']
+        now = current.get(key, set()) & active_ids if p.get('spotify_id') else set()
+        after = {t for t in active_ids if key in marks(t, done.get(t), current, [key])} if not p.get('missing') else now
+        rows.append(dict(p, count=len(now), count_after=len(after)))
+    genres, languages = {}, {}
+    for t in tracks:
+        meta = t.get('review') or t
+        for g in meta.get('genres') or []: genres[g] = genres.get(g, 0) + 1
+        for l in meta.get('languages') or []: languages[l] = languages.get(l, 0) + 1
+    top = lambda counts, n: [k for k, _ in sorted(counts.items(), key=lambda kv: (-kv[1], norm(kv[0])))[:n]]
+    return {'profiles': rows, 'max_active': MAX_ACTIVE, 'genres': top(genres, 40), 'languages': top(languages, 20),
+            'progress': progress(store, account)}
