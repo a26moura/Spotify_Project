@@ -29,7 +29,10 @@ App local (Python 3, só biblioteca padrão, servidor em mvp/server.py, interfac
 - Próximos passos sugeridos: terminar a etapa 1 (166 pendentes); playlists para Rock/Pop/Inglês (130 músicas com dados sem destino); modo rápido (Deezer/LRCLIB antes do MusicBrainz); filtro "decisões da IA para conferir".
 
 ## Regras
-- Rodar testes: `cd mvp; python -m unittest discover -s tests -v` (115 testes passando).
+- Rodar testes: `cd mvp; python -m unittest discover -s tests -v` (120 testes passando).
+- Interface (19/11): três cartões de etapa no topo (#classify, #organize + #edit-names, #prepare + #spotify-library), playlists, biblioteca e <details id=advanced> com as ferramentas. Botões estão no index.html (nada criado via JS); render() em app.js só atualiza estado.
+- Recomeçar playlist (etapa 2 → #restart): "Só no app" = /api/routing-reset (core.reset_routing tira a decisão do Ollama daquela playlist e marca routing.redo; route-step reavalia só as playlists em redo e junta com core.merge_routing). "Esvaziar no Spotify" = abaixo.
+- Esvaziar playlist: /api/clear-preview + /api/clear-execute, PUT /playlists/{id}/items com uris vazio; recusa se o conteúdo mudou desde a prévia (providers.clear_playlist).
 - Nunca gravar no Spotify sem prévia e confirmação do usuário; nunca repetir gravações automaticamente.
 - Revisões manuais têm prioridade sobre qualquer fonte.
 - Commits e PRs sem atribuição ao Claude: não adicionar "Co-Authored-By: Claude" nem "Generated with Claude Code".

@@ -3,26 +3,58 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Spotify Project · Organize suas curtidas</title><link rel="stylesheet" href="/style.css"></head>
 <body>
 <a class="skip-link" href="#library">Ir para as músicas</a>
-<aside>
-  <a class="brand" href="/" aria-label="Spotify Project, início"><span class="brand-icon">≋</span><span>Spotify Project<small>SEU ORGANIZADOR MUSICAL</small></span></a>
-  <div class="section-label">BIBLIOTECA</div>
-  <nav aria-label="Biblioteca"><button class="nav active" id="all"><span>♫</span> Todas as músicas</button><button class="nav" id="pending"><span>◌</span> Sem destino</button><button class="nav" id="excluded"><span>−</span> Fora do projeto</button></nav>
-  <div class="section-label">SUAS PLAYLISTS</div><nav id="playlist-nav" aria-label="Playlists"></nav>
-  <div class="aside-bottom"><span class="small-dot"></span> Feito para a sua coleção<p>Suas escolhas, no seu ritmo.</p></div>
-</aside>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Spotify Project, início"><span class="brand-icon" aria-hidden="true">≋</span><span>Spotify Project<small id="mode">Sem conexão</small></span></a>
+  <div class="account"><span class="avatar" aria-hidden="true">♪</span><span id="account-name">Carregando…</span><button id="connect" class="primary">Conectar Spotify ↗</button><button id="logout" class="text-button hidden">Desconectar</button></div>
+</header>
 <main>
-  <header class="topbar"><span class="eyebrow">BIBLIOTECA / VISÃO GERAL</span><div class="account"><span class="avatar" aria-hidden="true">♪</span><span id="account-name">Carregando…</span><button id="connect" class="secondary">Conectar Spotify ↗</button><button id="logout" class="text-button hidden">Desconectar</button></div></header>
-  <section class="hero" aria-labelledby="page-title"><div><span class="eyebrow accent">MENOS BAGUNÇA. MAIS MÚSICA.</span><h1 id="page-title">Suas curtidas.<br><span>Novas combinações.</span></h1><p>Transforme sua coleção em playlists que combinam com você.<br class="desktop-break"> Escolha os critérios. A gente cuida da organização.</p><div class="hero-actions"><button id="classify" class="primary">1. Classificar músicas <span>↗</span></button><button id="organize" class="secondary">2. Organizar nas playlists <span>↗</span></button><span id="hero-hint">Conecte sua conta para começar.</span></div></div><div class="record-art" aria-hidden="true"><div class="record-sleeve"><span>YOUR MUSIC<br>YOUR WAY.</span><span class="sleeve-bottom">SIDE A <b>33⅓ RPM</b></span></div><div class="record"><div class="record-label">♫<i></i></div></div><span class="art-caption">UMA COLEÇÃO. INFINITAS POSSIBILIDADES.</span></div></section>
-  <ol class="workflow" aria-label="Etapas da organização"><li id="step-connect"><span>01</span><div>Carregue sua conta<small>Curtidas e playlists existentes</small></div></li><li><span>02</span><div>Colete os rótulos<small>Faixa, álbum, letra, artista e Ollama</small></div></li><li><span>03</span><div>Interprete as playlists<small>Ollama local e prévia</small></div></li><li><span>04</span><div>Atualize o Spotify<small>Crie ou complete playlists</small></div></li></ol>
+  <section class="steps" aria-label="Etapas da organização">
+    <article class="step">
+      <span class="step-number">1</span>
+      <div class="step-body"><h2>Classificar músicas</h2><p>Sincroniza curtidas e playlists, busca gênero e idioma nas fontes e completa o que faltar com o Ollama.</p><p class="step-status" id="step1-status"></p></div>
+      <div class="step-actions"><button id="classify" class="primary">Classificar músicas</button></div>
+    </article>
+    <article class="step">
+      <span class="step-number">2</span>
+      <div class="step-body"><h2>Organizar nas playlists</h2><p>O Ollama decide os destinos pelos critérios de cada playlist. Nada é gravado nesta etapa.</p><p class="step-status" id="step2-status"></p></div>
+      <div class="step-actions"><button id="organize" class="primary">Organizar nas playlists</button><button id="edit-names" class="secondary">Editar playlists e critérios</button><button id="restart" class="secondary">Recomeçar uma playlist</button></div>
+    </article>
+    <article class="step">
+      <span class="step-number">3</span>
+      <div class="step-body"><h2>Salvar no Spotify</h2><p>Mostra a prévia das músicas a adicionar e só grava depois da sua confirmação.</p><p class="step-status" id="step3-status"></p></div>
+      <div class="step-actions"><button id="prepare" class="primary">Revisar e salvar</button><button id="spotify-library" class="secondary">Playlists do Spotify</button></div>
+    </article>
+  </section>
+
   <div id="notice" role="status" aria-live="polite">Carregando biblioteca…</div>
-  <section id="classification-progress" class="progress-panel hidden" aria-label="Progresso da classificação"><div class="section-heading"><strong id="classification-count"></strong><button id="stop-progress" class="secondary hidden">Parar classificação</button><span id="classification-eta" role="status"></span></div><progress id="classification-bar" max="1" value="0" aria-label="Músicas processadas"></progress><p id="classification-current" role="status"></p><details><summary>Log de processamento (últimos 100 eventos)</summary><pre id="classification-log" class="classification-log"></pre></details></section>
-  <section class="metrics" aria-label="Resumo da coleção"><div><span>Músicas na biblioteca</span><strong id="total">—</strong></div><div><span>Com destino definido</span><strong id="assigned">—</strong></div><div><span>Aguardando sua escolha</span><strong id="missing">—</strong></div><div><span>Playlists na coleção</span><strong id="playlist-count">—</strong></div></section>
-  <section class="destinations" aria-labelledby="destinations-title"><div class="section-heading"><div><span class="eyebrow">DO SEU JEITO</span><h2 id="destinations-title">Um destino para cada vibe.</h2></div><button class="secondary" id="edit-names">＋ Editar playlists e critérios</button></div><div id="playlist-cards" class="playlist-cards"></div></section>
-  <section id="library" class="library" aria-labelledby="view-title"><div class="section-heading"><div><h2 id="view-title">Todas as músicas</h2><p id="view-subtitle">Suas escolhas ficam salvas nesta conta.</p></div><button id="prepare" class="primary">Revisar e salvar no Spotify ↗</button></div>
-  <div class="filter-row"><label class="search"><span aria-hidden="true">⌕</span><input id="search" placeholder="Buscar música ou artista…" aria-label="Buscar música ou artista"></label><span id="visible-count"></span><details class="tools"><summary>Ferramentas</summary><div class="tools-panel"><button id="import" class="secondary">Sincronizar conta e playlists</button><button id="enrich" class="secondary">Consultar gêneros e idiomas</button></div></details><button id="stop" class="secondary hidden">Parar classificação</button></div>
-  <nav class="pagination" aria-label="Páginas da biblioteca"><label>Músicas por página <select id="page-size"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option></select></label><span id="page-info" role="status"></span><button id="previous-page" class="secondary">← Anterior</button><button id="next-page" class="secondary">Próxima →</button></nav>
-  <div class="table-wrap"><table><thead><tr><th>MÚSICA / ARTISTA</th><th>GÊNERO / IDIOMA</th><th>DESTINO</th><th>REVISÃO</th></tr></thead><tbody id="tracks"></tbody></table><div id="empty" class="empty hidden"><span>♫</span><h3>Nenhuma música por aqui.</h3><p>Conecte o Spotify e importe suas curtidas. Se já importou, confira os filtros.</p></div></div></section>
-  <footer><span>Classificação: Ollama, MusicBrainz e Wikidata. <button id="about" class="text-button">Sobre as sugestões</button></span><span id="mode">Sem conexão</span></footer>
+  <section id="classification-progress" class="progress-panel hidden" aria-label="Progresso"><div class="progress-head"><strong id="classification-count"></strong><span id="classification-eta" role="status"></span><button id="stop-progress" class="secondary hidden">Parar</button></div><progress id="classification-bar" max="1" value="0" aria-label="Músicas processadas"></progress><p id="classification-current" role="status"></p><details><summary>Log (últimos 100 eventos)</summary><pre id="classification-log" class="classification-log"></pre></details></section>
+
+  <section class="playlists" aria-labelledby="playlists-title">
+    <div class="section-heading"><h2 id="playlists-title">Suas playlists</h2><dl class="stats"><div><dt>Músicas</dt><dd id="total">—</dd></div><div><dt>Com destino</dt><dd id="assigned">—</dd></div><div><dt>Sem destino</dt><dd id="missing">—</dd></div><div><dt>Playlists</dt><dd id="playlist-count">—</dd></div></dl></div>
+    <div id="playlist-cards" class="playlist-cards"></div>
+  </section>
+
+  <section id="library" class="library" aria-labelledby="view-title">
+    <div class="section-heading"><div><h2 id="view-title">Todas as músicas</h2><p id="view-subtitle"></p></div></div>
+    <div class="filter-row">
+      <select id="view-select" aria-label="Mostrar"></select>
+      <select id="origin-filter" aria-label="Filtrar pela origem da classificação"></select>
+      <label class="search"><span aria-hidden="true">⌕</span><input id="search" placeholder="Buscar música ou artista…" aria-label="Buscar música ou artista"></label>
+      <span id="visible-count"></span>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Música / artista</th><th>Gênero / idioma</th><th>Destino</th><th>Situação</th></tr></thead><tbody id="tracks"></tbody></table><div id="empty" class="empty hidden"><h3>Nenhuma música por aqui.</h3><p>Conecte o Spotify e classifique suas curtidas. Se já fez isso, confira os filtros.</p></div></div>
+    <nav class="pagination" aria-label="Páginas da biblioteca"><button id="previous-page" class="secondary">← Anterior</button><span id="page-info" role="status"></span><button id="next-page" class="secondary">Próxima →</button><label>Por página <select id="page-size"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option></select></label></nav>
+  </section>
+
+  <details class="advanced" id="advanced">
+    <summary>Ferramentas avançadas <small>etapas separadas, modelo Ollama e testes</small></summary>
+    <div class="advanced-grid">
+      <div><h3>Conta</h3><button id="import" class="secondary">Sincronizar conta e playlists</button></div>
+      <div><h3>Etapa 1 em partes</h3><button id="collect-labels" class="secondary">Buscar rótulos nos sites</button><button id="ai-fill" class="secondary">Completar gênero/idioma com Ollama</button><button id="retry-classification" class="secondary">Tentar de novo sem classificação</button></div>
+      <div><h3>Etapa 2 em partes</h3><button id="route-local" class="secondary">Só distribuir com Ollama (sem prévia)</button></div>
+      <div><h3>Ollama e testes</h3><button id="sources" class="secondary">Modelo Ollama e teste de 30 músicas</button><button id="about" class="text-button">Como as sugestões funcionam</button></div>
+    </div>
+  </details>
 </main>
 <dialog id="dialog"><div class="dialog-header"><h2 id="dialog-title"></h2><button id="close-dialog" aria-label="Fechar">×</button></div><div id="dialog-body"></div></dialog>
 <script src="/app.js" defer></script>

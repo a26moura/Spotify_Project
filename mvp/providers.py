@@ -438,3 +438,11 @@ def execute_plan(store, account, api, plans):
             results.append({'name':plan['name'],'status':'Falha; prepare nova prévia','error':str(error)})
             break
     return results
+
+def clear_playlist(api, ident, previewed):
+    """Remove every item, only if the playlist still has exactly what the preview showed."""
+    if ident not in {p['id'] for p in api.playlists()}: raise RemoteError('A playlist não pertence mais à conta conectada.')
+    present = api.contents(ident)
+    if present != set(previewed): raise ValueError('A playlist mudou desde a prévia. Prepare uma nova prévia antes de esvaziar.')
+    if present: api.call('/playlists/'+ident+'/items','PUT',{'uris':[]})
+    return len(present)

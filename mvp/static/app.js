@@ -12,7 +12,7 @@ async function api(path,data){
   return result;
 }
 async function refresh(){state=await api('state');render();}
-function modal(title,body){document.querySelector('.tools').open=false;$('dialog-title').textContent=title;$('dialog-body').innerHTML=body;if(!$('dialog').open)$('dialog').showModal();}
+function modal(title,body){$('dialog-title').textContent=title;$('dialog-body').innerHTML=body;if(!$('dialog').open)$('dialog').showModal();}
 function close(){ $('dialog').close(); }
 async function action(button,job){button.disabled=true;try{await job();}catch(e){notify(e.message,true);}finally{button.disabled=false;}}
 const ORIGIN_LABEL={faixa:'pela faixa',album:'pelo álbum',letra:'pela letra',artista:'pelo artista',ia:'sugestão de IA'};
@@ -30,50 +30,45 @@ function originMatches(t){
 }
 function originSelector(){
   let el=$('origin-filter');
-  if(!el){el=document.createElement('select');el.id='origin-filter';el.setAttribute('aria-label','Filtrar pela origem da classificação');el.onchange=()=>{originFilter=el.value;page=1;render();};$('view-select').after(el);}
   const tracks=state.tracks, n=f=>{const keep=originFilter;originFilter=f;const c=tracks.filter(originMatches).length;originFilter=keep;return c;};
   el.innerHTML=[['all','Qualquer origem'],['faixa','Gênero pela faixa'],['album','Gênero pelo álbum (Deezer)'],['artista','Gênero pelo artista'],['ia','Gênero por IA'],['lang-letra','Idioma pela letra (LRCLIB)'],['lang-ia','Idioma por IA'],['no-genre','Sem gênero'],['no-language','Sem idioma'],['manual','Revisadas por você']]
     .map(([v,label])=>`<option value="${v}" ${v===originFilter?'selected':''}>${label}${v==='all'?'':' ('+n(v)+')'}</option>`).join('');
 }
+function busy(){return syncing||consulting||organizing||experimentRunning;}
+function showStop(visible){$('stop-progress').disabled=false;$('stop-progress').classList.toggle('hidden',!visible);}
 function render(){
-  $('spotify-library').disabled=syncing||consulting||organizing||experimentRunning;
-  $('collect-labels').disabled=syncing||consulting||organizing||experimentRunning||!state.tracks.length;
-  if($('ai-fill'))$('ai-fill').disabled=syncing||consulting||organizing||experimentRunning||!state.tracks.length;
-  $('route-local').disabled=syncing||consulting||organizing||experimentRunning||!state.rules.length||!state.ollama_configured||!state.tracks.length;
-  const tracks=state.tracks, included=tracks.filter(t=>!t.review?.exclude), assigned=included.filter(t=>t.destinations.length);
+  const tracks=state.tracks, included=tracks.filter(t=>!t.review?.exclude), assigned=included.filter(t=>t.destinations.length), working=busy();
+  const withGenre=tracks.filter(t=>t.genres.length||t.review).length, withLanguage=tracks.filter(t=>t.languages.length||t.review).length, toLookup=tracks.filter(t=>t.lookup==='pending'&&!t.review).length;
   $('total').textContent=tracks.length;$('assigned').textContent=assigned.length;$('missing').textContent=included.length-assigned.length;$('playlist-count').textContent=state.playlists.length;
-  $('account-name').textContent=state.display_name;$('connect').classList.toggle('hidden',state.connected);$('logout').classList.toggle('hidden',!state.connected);
-  $('hero-hint').textContent=organizing?'Organizando sua coleção…':consulting?'Consultando as fontes…':state.connected?'Você revisa tudo antes de salvar.':'Conecte sua conta para começar.';
-  $('step-connect').classList.toggle('complete',state.connected);
+  $('account-name').textContent=state.display_name;$('connect').classList.toggle('hidden',state.connected);$('logout').classList.toggle('hidden',!state.connected);$('logout').disabled=working;
+  $('mode').textContent=state.connected?'Conta conectada · dados locais':'Sem conexão com o Spotify';
+  $('step1-status').textContent=!state.connected?'Conecte o Spotify para começar.':!tracks.length?'Nenhuma curtida carregada ainda.':`${withGenre}/${tracks.length} com gênero · ${withLanguage}/${tracks.length} com idioma${toLookup?' · '+toLookup+' a consultar':''}`;
+  $('step2-status').textContent=!state.rules.length?'Defina as playlists e critérios primeiro.':!state.ollama_configured?'Selecione um modelo Ollama em Ferramentas avançadas.':`${assigned.length} com destino · ${included.length-assigned.length} sem destino`;
+  $('step3-status').textContent=state.connected?'Só adiciona músicas. Para esvaziar uma playlist, use “Recomeçar uma playlist” na etapa 2.':'Disponível depois de conectar o Spotify.';
+  $('classify').disabled=!state.connected||working;
+  $('organize').disabled=!tracks.length||working;
+  $('organize').title=!state.rules.length?'Defina as playlists e critérios primeiro.':!state.ollama_configured?'Selecione um modelo Ollama em Ferramentas avançadas.':'';
+  $('edit-names').disabled=working;$('restart').disabled=working||!state.playlists.length;
+  $('prepare').disabled=!state.connected||!tracks.length||working;
+  $('spotify-library').disabled=working;
+  $('import').disabled=!state.connected||working;
+  $('collect-labels').disabled=working||!tracks.length;
+  $('ai-fill').disabled=working||!tracks.length;
+  $('route-local').disabled=working||!state.rules.length||!state.ollama_configured||!tracks.length;
+  $('sources').disabled=working;
+  const retryCount=tracks.filter(retryEligible).length;
+  $('retry-classification').textContent=`Tentar de novo sem classificação (${retryCount})`;
+  $('retry-classification').disabled=!retryCount||working;
   $('playlist-cards').innerHTML=state.playlists.map(n=>{
     const rule=state.rules.find(r=>r.name===n);
     const criteria=rule?[rule.description,rule.genres.join(' / '),rule.languages.join(' / '),rule.artists.join(' / ')].filter(Boolean).join(' · '):'';
     const count=tracks.filter(t=>t.destinations.includes(n)).length;
-    return `<button class="playlist-card ${filter===n?'active':''}" data-name="${esc(n)}" aria-pressed="${filter===n}" aria-label="Ver playlist ${esc(n)}, ${count} músicas"><span class="card-icon" aria-hidden="true">♫</span><span class="card-count">${count} ${count===1?'música':'músicas'}</span><strong>${esc(n)}</strong><small title="${esc(criteria)}">${esc(criteria||'Interpretação pelo Ollama')}</small></button>`;
-  }).join('');
-  $('playlist-cards').querySelectorAll('button').forEach(b=>b.onclick=()=>{filter=b.dataset.name;page=1;render();$('library').scrollIntoView({block:'start'});$('view-select').focus({preventScroll:true});});
-  $('mode').textContent=state.connected?'Conta conectada · dados locais':'Sem conexão';
-  $('import').disabled=!state.connected;$('prepare').disabled=!state.connected||!tracks.length;
-  $('classify').disabled=!state.connected||organizing||consulting||syncing;
-  $('organize').disabled=!state.tracks.length||organizing||consulting||syncing;
-  $('organize').title=!state.rules.length?'Defina as playlists e critérios primeiro.':!state.ollama_configured?'Selecione um modelo Ollama em Ferramentas.':'';
-  $('edit-names').disabled=organizing||consulting||syncing;
-  $('enrich').disabled=organizing||consulting||syncing;
-  $('sources').disabled=organizing||consulting||syncing||experimentRunning;
-  const retryCount=tracks.filter(retryEligible).length;
-  $('retry-classification').textContent=`Tentar novamente sem classificação (${retryCount})`;
-  $('retry-classification').disabled=!retryCount||organizing||consulting||syncing||experimentRunning;
-  $('import').disabled=!state.connected||organizing||consulting||syncing;
-  $('prepare').disabled=!state.connected||!tracks.length||organizing||consulting||syncing;
-  $('logout').disabled=organizing||consulting||syncing;
-  $('playlist-nav').innerHTML=state.playlists.map(n=>`<button class="nav ${filter===n?'active':''}" data-name="${esc(n)}">${esc(n)}<span class="count">${tracks.filter(t=>t.destinations.includes(n)).length}</span></button>`).join('');
-  $('playlist-nav').querySelectorAll('button').forEach(b=>b.onclick=()=>{filter=b.dataset.name;page=1;render();});
-  for(const n of ['all','pending','excluded'])$(n).classList.toggle('active',filter===n);
-  $('view-title').textContent=({all:'Todas as músicas',pending:'Sem destino',excluded:'Fora do projeto'})[filter]||filter;
-  let selector=$('view-select');
-  if(!selector){selector=document.createElement('select');selector.id='view-select';selector.setAttribute('aria-label','Filtrar biblioteca');selector.onchange=()=>{filter=selector.value;page=1;render();};document.querySelector('.filter-row').prepend(selector);}
-  selector.innerHTML=[['all','Todas as músicas'],['pending','Sem destino'],['excluded','Fora do projeto'],...state.playlists.map(n=>[n,n])].map(([v,n])=>`<option value="${esc(v)}" ${v===filter?'selected':''}>${esc(n)}</option>`).join('');
-  $('view-subtitle').textContent=state.connected?'Escolha os destinos e revise antes de atualizar o Spotify.':'Conecte o Spotify e importe suas músicas curtidas para começar.';
+    return `<button class="playlist-card ${filter===n?'active':''}" data-name="${esc(n)}" aria-pressed="${filter===n}" aria-label="Ver músicas da playlist ${esc(n)}, ${count}"><strong>${esc(n)}</strong><span class="card-count">${count}</span><small title="${esc(criteria)}">${esc(criteria||'Interpretação pelo Ollama')}</small></button>`;
+  }).join('')||'<p class="muted">Nenhuma playlist definida. Use “Editar playlists e critérios” na etapa 2.</p>';
+  $('playlist-cards').querySelectorAll('button').forEach(b=>b.onclick=()=>{filter=filter===b.dataset.name?'all':b.dataset.name;page=1;render();if(filter!=='all')$('library').scrollIntoView({block:'start'});});
+  $('view-title').textContent=({all:'Todas as músicas',pending:'Sem destino',excluded:'Fora do projeto'})[filter]||'Playlist: '+filter;
+  $('view-select').innerHTML=[['all','Todas as músicas'],['pending','Sem destino'],['excluded','Fora do projeto'],...state.playlists.map(n=>[n,'Playlist: '+n])].map(([v,n])=>`<option value="${esc(v)}" ${v===filter?'selected':''}>${esc(n)}</option>`).join('');
+  $('view-subtitle').textContent=state.connected?'Clique em Editar para corrigir gênero, idioma ou destino. Suas escolhas têm prioridade.':'Conecte o Spotify e classifique suas curtidas para começar.';
   originSelector();
   const visible=tracks.filter(t=>originMatches(t)&&(filter==='all'||filter==='excluded'&&t.review?.exclude||filter==='pending'&&!t.review?.exclude&&!t.destinations.length||t.destinations.includes(filter))&&(`${t.title} ${t.artists.join(' ')}`).toLocaleLowerCase().includes(query));
   $('visible-count').textContent=visible.length+(visible.length===1?' música':' músicas');$('empty').classList.toggle('hidden',visible.length>0);
@@ -134,14 +129,14 @@ function showPlan(){
   });
 }
 $('close-dialog').onclick=close;
-for(const f of ['all','pending','excluded'])$(f).onclick=()=>{filter=f;page=1;render();};
+$('view-select').onchange=()=>{filter=$('view-select').value;page=1;render();};
+$('origin-filter').onchange=()=>{originFilter=$('origin-filter').value;page=1;render();};
 $('search').oninput=e=>{query=e.target.value.toLocaleLowerCase();page=1;render();};
 $('connect').onclick=configure;
 $('logout').onclick=()=>action($('logout'),async()=>{const r=await api('logout',{});await refresh();notify(r.message);});
 $('import').onclick=()=>action($('import'),syncLibrary);
-$('enrich').onclick=sourceDialog;
-function stopClassification(){stopRequested=true;consulting=false;notify('Parando após a música atual. Nenhuma nova música ou etapa será iniciada; resultados concluídos ficam salvos.');$('stop').disabled=true;$('stop-progress').disabled=true;}
-$('stop').onclick=stopClassification;$('stop-progress').onclick=stopClassification;
+function stopClassification(){stopRequested=true;consulting=false;notify('Parando após a música atual. Nenhuma nova música ou etapa será iniciada; resultados concluídos ficam salvos.');$('stop-progress').disabled=true;}
+$('stop-progress').onclick=stopClassification;
 $('prepare').onclick=()=>action($('prepare'),destinationDialog);
 $('edit-names').onclick=editRules;
 
@@ -168,7 +163,7 @@ function editRules(){
 function retryEligible(t){return !t.review&&!t.genres.length&&!t.languages.length&&!t.destinations.length;}
 async function consultSources(source='ollama',onlyEmpty=false){
   if(!organizing)stopRequested=false;
-  consulting=true;$('stop').disabled=false;$('stop-progress').disabled=false;$('stop').classList.remove('hidden');$('stop-progress').classList.remove('hidden');render();
+  consulting=true;showStop(true);render();
   let result, pauses=0;
   const pending=t=>t.lookup==='pending'&&!t.review&&(!onlyEmpty||retryEligible(t));
   beginProgress(state.tracks.filter(pending).length);
@@ -184,7 +179,7 @@ async function consultSources(source='ollama',onlyEmpty=false){
         const delay=source==='musicbrainz'?metadataCooldown(error.message):0;
         if(!delay)throw error;
         if(!consulting)return false;
-        if(pauses>=8)throw new Error('A fonte continua indisponível após oito retomadas automáticas. O progresso está salvo. Tente mais tarde em Ferramentas → Consultar gêneros e idiomas, ou revise e salve apenas as músicas já organizadas.');
+        if(pauses>=8)throw new Error('A fonte continua indisponível após oito retomadas automáticas. O progresso está salvo. Tente mais tarde em Ferramentas avançadas → Buscar rótulos nos sites, ou revise e salve apenas as músicas já organizadas.');
         pauses++;
         if(!await waitForMetadata(Math.min(300,Math.max(delay,60*2**(pauses-1))),pauses))return false;
         continue;
@@ -194,7 +189,7 @@ async function consultSources(source='ollama',onlyEmpty=false){
       if(result.remaining===0)return !stopRequested;
     }
     return false;
-  }catch(error){progressLog('Falha: '+error.message);throw error;}finally{finishProgress(progress.done>=progress.total?'Concluído':'Interrompido');consulting=false;$('stop').classList.add('hidden');$('stop-progress').classList.add('hidden');render();}
+  }catch(error){progressLog('Falha: '+error.message);throw error;}finally{finishProgress(progress.done>=progress.total?'Concluído':'Interrompido');consulting=false;showStop(false);render();}
 }
 
 function metadataCooldown(message){
@@ -220,10 +215,10 @@ $('classify').onclick=()=>action($('classify'),async()=>{
     await api('labels-start',{});await refresh();
     notify('Buscando gênero e idioma nas fontes (faixa, álbum, letra e artista)…');
     if(!await consultSources('musicbrainz')||stopRequested){notify('Classificação interrompida. O que já foi classificado está salvo; clique de novo para continuar de onde parou.');return;}
-    if(!state.ollama_configured){notify('Fontes consultadas. Para completar o que ficou vazio com IA, selecione um modelo em Ferramentas → Fontes de classificação.');return;}
+    if(!state.ollama_configured){notify('Fontes consultadas. Para completar o que ficou vazio com IA, selecione um modelo em Ferramentas avançadas → Modelo Ollama.');return;}
     if(!await completeWithAI())return;
     const g=state.tracks.filter(t=>t.genres.length||t.review).length,l=state.tracks.filter(t=>t.languages.length||t.review).length;
-    notify(`Classificação concluída: ${g}/${state.tracks.length} com gênero e ${l}/${state.tracks.length} com idioma. Use o filtro de origem para conferir. Depois clique em 2. Organizar nas playlists.`);
+    notify(`Classificação concluída: ${g}/${state.tracks.length} com gênero e ${l}/${state.tracks.length} com idioma. Use o filtro de origem para conferir. Depois clique em Organizar nas playlists (etapa 2).`);
   }finally{organizing=false;render();}
 });
 $('organize').onclick=()=>action($('organize'),async()=>{
@@ -235,7 +230,7 @@ $('organize').onclick=()=>action($('organize'),async()=>{
     await destinationDialog();
   }finally{organizing=false;render();}
 });
-$('about').onclick=()=>modal('Fontes e sugestões','<p>Ollama executa um modelo local para sugerir gêneros e idiomas a partir de título, artistas e metadados disponíveis. Não analisa áudio. As respostas são hipóteses para revisão, e não evidências documentais.</p><p>O botão 1. Classificar músicas busca gênero e idioma no MusicBrainz e Wikidata (faixa), no Deezer (gênero do álbum, pelo ISRC), no LRCLIB (idioma detectado localmente na letra, sem guardar a letra) e no MusicBrainz (artista), e completa o que faltar com o Ollama. O botão 2. Organizar nas playlists usa o Ollama para interpretar cada playlist pelo nome, descrição e critérios e mostra a prévia antes de salvar no Spotify. Uma música pode pertencer a várias playlists. Em Ferramentas, você também pode executar cada etapa separadamente. O botão Parar classificação interrompe após a música atual. Suas revisões manuais têm prioridade.</p>');
+$('about').onclick=()=>modal('Fontes e sugestões','<p>Ollama executa um modelo local para sugerir gêneros e idiomas a partir de título, artistas e metadados disponíveis. Não analisa áudio. As respostas são hipóteses para revisão, e não evidências documentais.</p><p>O botão Classificar músicas busca gênero e idioma no MusicBrainz e Wikidata (faixa), no Deezer (gênero do álbum, pelo ISRC), no LRCLIB (idioma detectado localmente na letra, sem guardar a letra) e no MusicBrainz (artista), e completa o que faltar com o Ollama. O botão Organizar nas playlists usa o Ollama para interpretar cada playlist pelo nome, descrição e critérios e mostra a prévia antes de salvar no Spotify. Uma música pode pertencer a várias playlists. Em Ferramentas avançadas, você também pode executar cada etapa separadamente. O botão Parar interrompe após a música atual. Suas revisões manuais têm prioridade.</p>');
 refresh().then(async()=>{if(state.connected&&state.needs_sync)await syncLibrary();else notify(state.connected?'Biblioteca carregada. Classificações anteriores preservadas.':'Conecte o Spotify para carregar curtidas e playlists.');}).catch(e=>notify(e.message,true));
 
 function sourceDialog(){
@@ -273,8 +268,8 @@ async function runExperiment(source){
   }catch(e){progressLog('Falha: '+e.message);notify(e.message,true);modal('Teste pausado',`<p>${esc(e.message)}</p><p>Nenhum resultado foi aplicado. Confira a fonte e inicie outro teste quando estiver disponível.</p>`);}
   finally{finishProgress(progress.done>=progress.total?'Teste concluído':'Teste interrompido');experimentRunning=false;render();}
 }
-const sourceButton=document.createElement('button');sourceButton.id='sources';sourceButton.className='secondary';sourceButton.textContent='Fontes de classificação / teste de 30';sourceButton.onclick=sourceDialog;$('enrich').before(sourceButton);
-const retryButton=document.createElement('button');retryButton.id='retry-classification';retryButton.className='secondary';$('prepare').before(retryButton);
+$('sources').onclick=sourceDialog;
+const retryButton=$('retry-classification');
 retryButton.onclick=()=>{
   const count=state.tracks.filter(retryEligible).length;
   modal('Tentar novamente sem classificação',`<p>${count} músicas sem gênero e sem idioma serão consultadas novamente no Ollama, sem reutilizar a resposta anterior em cache.</p><p>Músicas classificadas, com destino definido ou com revisão manual ficam de fora. Um novo teste ainda pode terminar sem informação suficiente.</p><p>Modelo local: <strong>${esc(state.ollama_model||'Não configurado')}</strong></p><div class="dialog-actions"><button id="retry-settings" class="secondary">Configurar fonte</button><button id="retry-start" class="primary" ${!state.ollama_configured||!count?'disabled':''}>Tentar novamente</button></div>`);
@@ -326,14 +321,33 @@ async function syncLibrary(){
 }
 function spotifyLibraryDialog(){
   const playlists=state.spotify_library?.playlists||[];
-  modal('Sua biblioteca no Spotify',`<p>${playlists.length} playlists sincronizadas. A classificação considera suas músicas curtidas. As faixas já presentes nas playlists são preservadas.</p>${!playlists.length?'<p>Conecte sua conta e sincronize a biblioteca para ver suas playlists.</p>':''}${playlists.map((p,i)=>`<div class="plan-row"><strong>${esc(p.name)}</strong><p>${p.unavailable?'Conteúdo indisponível para este aplicativo':p.tracks.length+' músicas carregadas'} · ${p.owned?'Sua playlist':'Playlist seguida ou compartilhada'}</p>${p.owned?`<button class="secondary" data-adopt="${i}" ${Object.values(state.targets).includes(p.id)?'disabled':''}>${Object.values(state.targets).includes(p.id)?'Já vinculada':'Usar na organização'}</button>`:''}${p.tracks.length?`<details><summary>Ver músicas existentes</summary><ul>${p.tracks.map(t=>`<li>${esc(t.title)} — ${esc(t.artists.join(', '))}</li>`).join('')}</ul></details>`:''}</div>`).join('')}<p>Para playlists com o mesmo nome de um critério, escolha o destino na prévia. Apenas suas próprias playlists podem receber adições.</p>`);
+  modal('Sua biblioteca no Spotify',`<p>${playlists.length} playlists sincronizadas. A classificação considera suas músicas curtidas. As faixas já presentes nas playlists são preservadas.</p>${!playlists.length?'<p>Conecte sua conta e sincronize a biblioteca para ver suas playlists.</p>':''}${playlists.map((p,i)=>`<div class="plan-row"><strong>${esc(p.name)}</strong><p>${p.unavailable?'Conteúdo indisponível para este aplicativo':p.tracks.length+' músicas carregadas'} · ${p.owned?'Sua playlist':'Playlist seguida ou compartilhada'}</p>${p.owned?`<button class="secondary" data-adopt="${i}" ${Object.values(state.targets).includes(p.id)?'disabled':''}>${Object.values(state.targets).includes(p.id)?'Já vinculada':'Usar na organização'}</button>`:''}${p.tracks.length?`<details><summary>Ver músicas existentes</summary><ul>${p.tracks.map(t=>`<li>${esc(t.title)} — ${esc(t.artists.join(', '))}</li>`).join('')}</ul></details>`:''}</div>`).join('')}<p>Para playlists com o mesmo nome de um critério, escolha o destino na prévia. Apenas suas próprias playlists podem receber adições. Para esvaziar uma, use Recomeçar uma playlist (etapa 2).</p>`);
   document.querySelectorAll('[data-adopt]').forEach(b=>b.onclick=()=>action(b,async()=>{const r=await api('adopt-playlist',{id:playlists[Number(b.dataset.adopt)].id});await refresh();editRules();notify(r.message);}));
 }
-const libraryButton=document.createElement('button');libraryButton.id='spotify-library';libraryButton.className='secondary';libraryButton.textContent='Ver playlists do Spotify';libraryButton.onclick=spotifyLibraryDialog;$('edit-names').before(libraryButton);
+async function clearPlaylistDialog(id){
+  const preview=await api('clear-preview',{id});
+  if(!preview.count){modal('Esvaziar playlist',`<p>A playlist <strong>${esc(preview.name)}</strong> já está vazia no Spotify.</p><div class="dialog-actions"><button id="clear-back" class="secondary">Voltar</button></div>`);$('clear-back').onclick=restartDialog;return;}
+  modal('Esvaziar playlist',`<p>Prévia: <strong>${preview.count} músicas</strong> serão removidas da playlist <strong>${esc(preview.name)}</strong> no Spotify. A playlist continua existindo; suas curtidas, classificações e revisões locais não mudam.</p><p>Esta ação não pode ser desfeita pelo aplicativo. Depois, use “Organizar nas playlists” (etapa 2) para preenchê-la de novo.</p><details><summary>Ver as ${preview.count} músicas</summary><ul>${preview.tracks.map(t=>`<li>${esc(t.title)} — ${esc(t.artists.join(', '))}</li>`).join('')}</ul></details><div class="dialog-actions"><button id="clear-back" class="secondary">Cancelar</button><button id="clear-confirm" class="primary">Remover ${preview.count} músicas</button></div>`);
+  $('clear-back').onclick=restartDialog;
+  $('clear-confirm').onclick=()=>action($('clear-confirm'),async()=>{const r=await api('clear-execute',{id:preview.id,confirm:true});await refresh();restartDialog();notify(r.message);});
+}
+function restartDialog(){
+  const linked=name=>state.targets[name]&&(state.spotify_library?.playlists||[]).find(p=>p.id===state.targets[name]);
+  modal('Recomeçar uma playlist',`<p>Escolha onde recomeçar. As duas opções podem ser usadas juntas.</p><ul><li><strong>Só no app</strong> apaga as decisões do Ollama para essa playlist. Nada muda no Spotify. Na próxima “Organizar nas playlists”, o Ollama reavalia as músicas só para ela. Critérios explícitos e revisões manuais continuam valendo.</li><li><strong>Esvaziar no Spotify</strong> remove todas as músicas da playlist na sua conta, depois de uma prévia e da sua confirmação. A playlist continua existindo.</li></ul>${state.playlists.map((n,i)=>{const p=linked(n),count=state.tracks.filter(t=>t.destinations.includes(n)).length;return `<div class="plan-row"><strong>${esc(n)}</strong><span>${count} com destino no app</span><p class="muted">${p?'No Spotify: '+esc(p.name)+(p.unavailable?'':' · '+p.tracks.length+' músicas na última sincronização'):'Ainda sem playlist vinculada no Spotify'}</p><button class="secondary" data-reset="${i}">Só no app</button><button class="secondary" data-empty="${i}" ${!p||!state.connected?'disabled':''}>Esvaziar no Spotify</button></div>`;}).join('')||'<p>Nenhuma playlist definida.</p>'}`);
+  document.querySelectorAll('[data-reset]').forEach(b=>b.onclick=()=>{
+    const name=state.playlists[Number(b.dataset.reset)];
+    modal('Recomeçar só no app',`<p>As decisões do Ollama para <strong>${esc(name)}</strong> serão apagadas neste computador. O Spotify não muda.</p><p>Músicas que entram pelos critérios explícitos da playlist ou por revisão manual continuam com esse destino.</p><div class="dialog-actions"><button id="reset-back" class="secondary">Cancelar</button><button id="reset-confirm" class="primary">Apagar decisões</button></div>`);
+    $('reset-back').onclick=restartDialog;
+    $('reset-confirm').onclick=()=>action($('reset-confirm'),async()=>{const r=await api('routing-reset',{name});currentPlan=null;await refresh();restartDialog();notify(r.message);});
+  });
+  document.querySelectorAll('[data-empty]').forEach(b=>b.onclick=()=>action(b,()=>clearPlaylistDialog(state.targets[state.playlists[Number(b.dataset.empty)]])));
+}
+$('restart').onclick=restartDialog;
+$('spotify-library').onclick=spotifyLibraryDialog;
 
 async function distributeLocally(){
   await api('route-start',{});await refresh();
-  consulting=true;$('stop').disabled=false;$('stop-progress').disabled=false;$('stop').classList.remove('hidden');$('stop-progress').classList.remove('hidden');render();
+  consulting=true;showStop(true);render();
   beginProgress(state.tracks.filter(t=>t.routing_pending).length);
   try{
     while(consulting&&!stopRequested){
@@ -345,7 +359,7 @@ async function distributeLocally(){
       if(result.remaining===0)return !stopRequested;
     }
     return false;
-  }finally{finishProgress(stopRequested?'Interrompido':'Distribuição encerrada');consulting=false;$('stop').classList.add('hidden');$('stop-progress').classList.add('hidden');render();}
+  }finally{finishProgress(stopRequested?'Interrompido':'Distribuição encerrada');consulting=false;showStop(false);render();}
 }
 async function completeWithAI(){
   const r=await api('ai-fill-start',{});await refresh();
@@ -354,10 +368,9 @@ async function completeWithAI(){
   if(!await consultSources('ollama')||stopRequested){notify('Complemento com IA interrompido. Resultados concluídos foram salvos.');return false;}
   return true;
 }
-const aiButton=document.createElement('button');aiButton.id='ai-fill';aiButton.className='secondary';aiButton.textContent='1b. Completar gênero/idioma com Ollama';
+const aiButton=$('ai-fill');
 aiButton.onclick=()=>action(aiButton,async()=>{stopRequested=false;if(!state.ollama_configured){sourceDialog();return;}await completeWithAI();});
-const labelsButton=document.createElement('button');labelsButton.id='collect-labels';labelsButton.className='secondary';labelsButton.textContent='1. Buscar rótulos nos sites';$('enrich').before(labelsButton);
+const labelsButton=$('collect-labels');
 labelsButton.onclick=()=>action(labelsButton,async()=>{stopRequested=false;await api('labels-start',{});await refresh();await consultSources('musicbrainz');});
-const routeButton=document.createElement('button');routeButton.id='route-local';routeButton.className='secondary';routeButton.textContent='2. Distribuir nas playlists com Ollama';$('enrich').before(routeButton);
-routeButton.before(aiButton);
+const routeButton=$('route-local');
 routeButton.onclick=()=>action(routeButton,async()=>{stopRequested=false;await distributeLocally();});

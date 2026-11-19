@@ -2,7 +2,7 @@
 
 O botão **1. Classificar músicas** sincroniza a conta, busca os rótulos nos sites e completa o que faltar com o Ollama. O botão **2. Organizar nas playlists** usa o Ollama para decidir a participação em cada playlist. A gravação no Spotify continua exigindo a prévia e sua confirmação.
 
-Também é possível executar separadamente em Ferramentas:
+Também é possível executar separadamente em Ferramentas avançadas:
 
 1. **Buscar rótulos nos sites**: consulta MusicBrainz e Wikidata mesmo sem playlists definidas. Guarda todos os nomes de gêneros e tags retornados para a gravação identificada, sem reduzi-los a uma categoria única. Tags ficam identificadas como tags; não são automaticamente gêneros. Não une resultados de gravações diferentes ou ambíguas.
 2. **Distribuir nas playlists com Ollama**: lê as informações da música e o nome, descrição e critérios de cada playlist. Salva uma decisão por playlist (pertence, não pertence ou informação insuficiente), com justificativa. Uma música pode pertencer a várias playlists.
@@ -25,7 +25,7 @@ Gênero e idioma de cada música são preenchidos em ordem de confiança. Cada c
 
 Uma origem mais forte substitui uma mais fraca; uma mais fraca nunca substitui uma mais forte. Revisões manuais continuam prioritárias.
 
-O botão 1. Classificar músicas executa 1 → 2 → 3; a distribuição fica no botão 2. Organizar nas playlists. Se o MusicBrainz recusar consultas, o app faz até oito pausas automáticas (no máximo 5 minutos cada) antes de parar; clicar de novo continua de onde parou. Em Ferramentas: **1. Buscar rótulos nos sites** (faixa + artista) e **1b. Completar gênero/idioma com Ollama**. Faixas já consultadas antes desta versão e sem gênero são consultadas de novo para tentar o artista (as respostas anteriores vêm do cache).
+O botão 1. Classificar músicas executa 1 → 2 → 3; a distribuição fica no botão 2. Organizar nas playlists. Se o MusicBrainz recusar consultas, o app faz até oito pausas automáticas (no máximo 5 minutos cada) antes de parar; clicar de novo continua de onde parou. Em Ferramentas avançadas: **Buscar rótulos nos sites** (faixa + artista) e **Completar gênero/idioma com Ollama**. Faixas já consultadas antes desta versão e sem gênero são consultadas de novo para tentar o artista (as respostas anteriores vêm do cache).
 
 Na biblioteca, o filtro de origem mostra: gênero pela faixa, pelo artista, por IA, idioma por IA, sem gênero, sem idioma e revisadas por você. Gêneros pelo artista e por IA aparecem com uma etiqueta na coluna Gênero / Idioma.
 

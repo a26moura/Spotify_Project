@@ -12,8 +12,8 @@ import threading
 import time
 import urllib.parse
 
-from core import Store, suggest, norm, routing_key, infer_origin, needs_complements, needs_artist_labels, needs_routing, has_evidence
-from providers import Enricher, RemoteError, Spotify, execute_plan, prepare_plan, request_json
+from core import Store, suggest, norm, routing_key, infer_origin, needs_complements, needs_artist_labels, needs_routing, has_evidence, reset_routing, merge_routing
+from providers import Enricher, RemoteError, Spotify, clear_playlist, execute_plan, prepare_plan, request_json
 from classification import Ollama, merge_metadata, sample_tracks, expanded_rules, missing_reason
 
 ROOT = Path(__file__).resolve().parent
@@ -187,7 +187,12 @@ class Handler(BaseHTTPRequestHandler):
                     pending=[t for t in STORE.tracks(account,active=True) if needs_routing(t,rules,OLLAMA.model)]
                     if not pending:return self.send(data={'remaining':0,'message':'Distribuição local concluída.'})
                     t=pending[0]
-                    result=OLLAMA.route(t,rules)
+                    previous=t.get('routing') or {}
+                    redo=[r for r in rules if r['name'] in previous.get('redo',[])]
+                    if redo and previous.get('key')==routing_key(t,rules) and previous.get('model')==OLLAMA.model:
+                        # Only the playlists reset by the user are asked again; other decisions stay.
+                        result=merge_routing(t,rules,previous,OLLAMA.route(t,redo))
+                    else:result=OLLAMA.route(t,rules)
                     t['routing_required']=True;t['routing']=result
                     STORE.put(account,t);self.invalidate(account)
                     return self.send(data={'remaining':len(pending)-1,'message':'Playlists avaliadas: '+t['title'],'track':{'id':t['id'],'title':t['title'],'artists':t['artists']},'note':'; '.join(d['playlist']+': '+d['verdict'] for d in result['decisions'])})
@@ -363,6 +368,37 @@ class Handler(BaseHTTPRequestHandler):
                     titles = {t['uri']:t['title'] for t in STORE.tracks(account)}
                     public = [dict(p,tracks=[{'uri':uri,'title':titles.get(uri,uri)} for uri in p['uris']]) for p in plans]
                     return self.send(data={'id':ident,'plans':public,'message':'Revise e confirme. Apenas adições serão realizadas.'})
+                if path == '/api/routing-reset':
+                    name=data.get('name')
+                    if name not in STORE.names(account):raise ValueError('Playlist não encontrada nos critérios.')
+                    count=0
+                    for t in STORE.tracks(account):
+                        if reset_routing(t,name):STORE.put(account,t);count+=1
+                    self.invalidate(account)
+                    return self.send(data={'count':count,'message':f'Decisões do Ollama para "{name}" apagadas só no app ({count} músicas). Nada mudou no Spotify. Clique em "Organizar nas playlists" (etapa 2) para reavaliar.'})
+                if path == '/api/clear-preview':
+                    if not s.get('token'): raise ValueError('Conecte sua conta para esvaziar uma playlist.')
+                    api=self.api(s)
+                    playlist=next((p for p in api.playlists() if p['id']==data.get('id')),None)
+                    if not playlist: raise ValueError('Escolha uma playlist da sua conta.')
+                    items=api.playlist_tracks(playlist['id'])
+                    uris=api.contents(playlist['id'])
+                    ident=secrets.token_urlsafe(32)
+                    s['clear']={'id':ident,'playlist':playlist['id'],'name':playlist.get('name','Playlist'),'uris':sorted(uris),'expires':time.time()+600}
+                    return self.send(data={'id':ident,'name':s['clear']['name'],'count':len(items),
+                        'tracks':[{'title':t.get('name',''),'artists':[a['name'] for a in t.get('artists',[])]} for t in items],
+                        'message':'Confira antes de confirmar. Todas as músicas desta playlist serão removidas no Spotify.'})
+                if path == '/api/clear-execute':
+                    pending=s.pop('clear',None)
+                    if not s.get('token') or not pending or data.get('confirm') is not True or not secrets.compare_digest(pending['id'],str(data.get('id',''))) or pending['expires']<time.time():
+                        raise ValueError('Confirmação ausente ou prévia expirada. Prepare outra prévia.')
+                    removed=clear_playlist(self.api(s),pending['playlist'],pending['uris'])
+                    library=STORE.spotify_library(account)
+                    for p in library['playlists']:
+                        if p['id']==pending['playlist']:p['tracks']=[]
+                    STORE.save_spotify_library(account,library)
+                    self.invalidate(account)
+                    return self.send(data={'removed':removed,'message':f'Playlist "{pending["name"]}" esvaziada no Spotify ({removed} músicas removidas). Use "Organizar nas playlists" (etapa 2) para preenchê-la de novo.'})
                 if path == '/api/execute':
                     plan = s.pop('plan',None)
                     if not s.get('token') or not plan or data.get('confirm') is not True or not secrets.compare_digest(plan['id'],str(data.get('id',''))) or plan['revision']!=s['revision'] or plan['expires']<time.time(): raise ValueError('Confirmação ausente ou prévia expirada. Prepare outra prévia.')

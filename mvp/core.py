@@ -129,7 +129,24 @@ def has_evidence(track):
 def needs_routing(track, rules, model):
     if track.get('review') or not has_evidence(track): return False
     routing = track.get('routing') or {}
-    return routing.get('key') != routing_key(track, rules) or routing.get('model') != model
+    return routing.get('key') != routing_key(track, rules) or routing.get('model') != model or bool(routing.get('redo'))
+
+
+def reset_routing(track, name):
+    """Forget the model's decision for one playlist, locally. Manual reviews are never touched.
+    Returns True when the track changed; it is re-evaluated for that playlist on the next distribution."""
+    routing = track.get('routing')
+    if track.get('review') or not routing or not any(d['playlist']==name for d in routing.get('decisions',[])): return False
+    routing['decisions'] = [d for d in routing['decisions'] if d['playlist']!=name]
+    routing['redo'] = sorted(set(routing.get('redo',[]))|{name})
+    return True
+
+
+def merge_routing(track, rules, previous, partial):
+    """Combine a partial re-evaluation (only the playlists in redo) with the decisions kept from before."""
+    redo = set(previous.get('redo',[]))
+    kept = [d for d in previous.get('decisions',[]) if d['playlist'] not in redo]
+    return {'key':routing_key(track,rules),'model':partial['model'],'decisions':kept+partial['decisions']}
 
 
 def model_may_say_yes(track, rule):
