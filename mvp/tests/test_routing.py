@@ -14,7 +14,7 @@ class RoutingTests(unittest.TestCase):
     tearDown=test_classification.ClassificationTests.tearDown
     def test_raw_labels_preserved_and_not_collapsed(self):
         t=track();provider=Enricher(self.store,complements=False)
-        with patch.object(provider,'mb',side_effect=[{'recordings':[{'id':'one','title':'Song','artist-credit':[{'artist':{'name':'Artist'}}],'length':200000}]},{'id':'one','genres':[{'name':'alternative rock','count':3},{'name':'indie rock','count':2}],'tags':[{'name':'energetic','count':1}]}]):
+        with patch.object(provider,'mb',side_effect=[{'recordings':[{'id':'one','title':'Song','artist-credit':[{'artist':{'name':'Artist'}}],'length':200000}]},{'id':'one','genres':[{'name':'alternative rock','count':3},{'name':'indie rock','count':2}],'tags':[{'name':'energetic','count':1}]},{'artists':[]}]):
             result=provider.enrich(t)
         self.assertTrue(result['labels_collected'])
         self.assertTrue(merge_metadata(t,result)['labels_collected'])

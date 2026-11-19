@@ -12,7 +12,7 @@ import threading
 import time
 import urllib.parse
 
-from core import Store, suggest, norm, routing_key, infer_origin, needs_complements, needs_routing, has_evidence
+from core import Store, suggest, norm, routing_key, infer_origin, needs_complements, needs_artist_labels, needs_routing, has_evidence
 from providers import Enricher, RemoteError, Spotify, execute_plan, prepare_plan, request_json
 from classification import Ollama, merge_metadata, sample_tracks, expanded_rules, missing_reason
 
@@ -159,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
                     for t in STORE.tracks(account,active=True):
                         if not t.get('review'):
                             t['routing_required']=True
-                            if not t.get('labels_collected') or not t.get('genres') and not t.get('artist_checked') or needs_complements(t):t['lookup']='pending'
+                            if not t.get('labels_collected') or not t.get('genres') and not t.get('artist_checked') or needs_complements(t) or needs_artist_labels(t):t['lookup']='pending'
                             if t.get('lookup')=='pending':count+=1
                             STORE.put(account,t)
                     self.invalidate(account)

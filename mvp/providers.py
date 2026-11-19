@@ -298,15 +298,16 @@ class Enricher:
         genres = [g['name'] for g in ranked][:4]
         labels = [{'label':g,'kind':'artist-genre','source':'MusicBrainz (artista)','url':url} for g in genres]
         sources = [{'label':'MusicBrainz (artista: '+a.get('name', track['artists'][0])+')','url':url,'level':'artista'}]
-        if not genres:
-            for rel in a.get('relations',[]):
-                target = rel.get('url',{}).get('resource','')
-                wd = self.wikidata_labels(target,'P136')[:4]
-                if wd:
-                    genres = wd
-                    labels += [{'label':g,'kind':'artist-genre','source':'Wikidata (artista)','url':target} for g in wd]
-                    sources.append({'label':'Wikidata (artista)','url':target,'level':'artista'})
-                    break
+        # Wikidata artist genres are always kept as labels (e.g. reggaeton for Bad Bunny); they only
+        # become the main genre when MusicBrainz has none.
+        for rel in a.get('relations',[]):
+            target = rel.get('url',{}).get('resource','')
+            wd = self.wikidata_labels(target,'P136')[:6]
+            if wd:
+                if not genres: genres = wd[:4]
+                labels += [{'label':g,'kind':'artist-genre','source':'Wikidata (artista)','url':target} for g in wd]
+                sources.append({'label':'Wikidata (artista)','url':target,'level':'artista'})
+                break
         return list(dict.fromkeys(genres)), labels, sources, a.get('name')
 
     def enrich(self, track):
@@ -371,11 +372,14 @@ class Enricher:
                 result['sources'].append({'label':'LRCLIB (idioma detectado na letra)','url':'https://lrclib.net/','level':'letra'})
                 result['lyrics_note'] = 'Idioma detectado localmente na letra (LRCLIB): '+', '.join(lyrics['languages'])+'.'
         if self.complements and complete: result['complements_checked'] = True
+        # The artist's genres are always collected as extra labels: Deezer album genres are coarse and
+        # track genres can be sparse. They only become the main genre when nothing else is known.
+        artist_genres, labels, artist_sources, artist_name = self.artist_genres(track, hits)
+        result['source_labels'] += labels
+        result['artist_labels'] = True
         if not result['genres'] and not track.get('genres'):
-            artist_genres, labels, artist_sources, artist_name = self.artist_genres(track, hits)
             if artist_genres:
                 result.update(genres=artist_genres, artist_genres=artist_genres, genre_origin='artista')
-                result['source_labels'] += labels
                 result['sources'] += artist_sources
                 note = ('Sem gênero documentado para a faixa. ' if candidate else note+' ') + \
                        'Gênero sugerido pelo artista '+(artist_name or track['artists'][0])+'; confira se esta música segue o estilo do artista.'

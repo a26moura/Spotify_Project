@@ -38,14 +38,16 @@ class EnrichOriginTests(unittest.TestCase):
         self.assertIn('pelo artista',result['lookup_note'])
         self.assertNotIn('language_origin',result)
 
-    def test_track_genres_skip_artist(self):
+    def test_track_genres_keep_artist_as_extra_labels(self):
         def r(entity,ident,params):
             if entity=='recording' and not ident:return {'recordings':[rec('r1')]}
             if entity=='recording':return {'id':'r1','genres':[{'name':'reggaeton'}],'tags':[],'relations':[]}
+            if entity=='artist' and ident=='art1':return {'name':'Anitta','genres':[{'name':'funk carioca','count':5}],'relations':[]}
             raise AssertionError((entity,ident))
         e=FakeEnricher(self.store,r);result=e.enrich(dict(TRACK))
         self.assertEqual(result['genre_origin'],'faixa');self.assertEqual(result['genres'],['reggaeton'])
-        self.assertFalse(any(c[0]=='artist' for c in e.calls))
+        self.assertIn(('funk carioca','artist-genre'),[(l['label'],l['kind']) for l in result['source_labels']])
+        self.assertTrue(result['artist_labels']);self.assertNotIn('artist_genres',result)
 
     def test_artist_search_ambiguous_name_gives_nothing(self):
         def r(entity,ident,params):
@@ -64,12 +66,27 @@ class EnrichOriginTests(unittest.TestCase):
         result=FakeEnricher(self.store,r).enrich(dict(TRACK))
         self.assertEqual((result['genres'],result['genre_origin']),(['pop'],'artista'))
 
-    def test_existing_genres_do_not_trigger_artist_lookup(self):
+    def test_existing_genres_are_not_replaced_by_artist(self):
         def r(entity,ident,params):
             if entity=='recording':return {'recordings':[]}
+            if entity=='artist' and not ident:return {'artists':[{'id':'x','name':'Anitta'}]}
+            if entity=='artist' and ident=='x':return {'name':'Anitta','genres':[{'name':'funk carioca','count':1}],'relations':[]}
             raise AssertionError((entity,ident))
         result=FakeEnricher(self.store,r).enrich(dict(TRACK,genres=['Pop'],genre_origin='ia'))
-        self.assertEqual(result['genres'],[])
+        self.assertEqual(result['genres'],[]);self.assertNotIn('genre_origin',result)
+        self.assertIn(('funk carioca','artist-genre'),[(l['label'],l['kind']) for l in result['source_labels']])
+
+    def test_wikidata_artist_genres_are_labels_even_with_musicbrainz_genres(self):
+        class WD(FakeEnricher):
+            def wikidata_labels(self,target,prop):return ['reggaeton','Latin trap']
+        def r(entity,ident,params):
+            if entity=='recording':return {'recordings':[rec('r1'),rec('r2')]}
+            if entity=='artist':return {'name':'Bad Bunny','genres':[{'name':'latin','count':3}],
+                                        'relations':[{'url':{'resource':'https://www.wikidata.org/wiki/Q1'}}]}
+            raise AssertionError((entity,ident))
+        result=WD(self.store,r).enrich(dict(TRACK))
+        self.assertEqual((result['genres'],result['genre_origin']),(['latin'],'artista'))
+        self.assertIn(('reggaeton','artist-genre'),[(l['label'],l['kind']) for l in result['source_labels']])
 
 class MergeTests(unittest.TestCase):
     def test_priority(self):

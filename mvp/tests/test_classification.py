@@ -30,7 +30,7 @@ class ClassificationTests(unittest.TestCase):
         t.pop('duration_ms');self.assertIsNone(choose_recording(t,[candidate(),candidate(ident='two')]))
     def test_isrc_failure_falls_back_to_title(self):
         enricher=Enricher(self.store,complements=False)
-        with patch.object(enricher,'mb',side_effect=[{'recordings':[]},{'recordings':[candidate()]},{'id':'one','genres':[{'name':'metalcore','count':2}]}]) as mb:
+        with patch.object(enricher,'mb',side_effect=[{'recordings':[]},{'recordings':[candidate()]},{'id':'one','genres':[{'name':'metalcore','count':2}]},{'artists':[]}]) as mb:
             result=enricher.enrich(track())
         self.assertEqual(result['genres'],['metalcore'])
         self.assertIn('recording:',mb.call_args_list[1].kwargs['query'])

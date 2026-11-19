@@ -37,8 +37,45 @@ def default_rule(name):
             'languages': [name] if language else [], 'artists': []}
 
 
+LABEL_KINDS = ('genre', 'album-genre', 'artist-genre')
+
+def genre_labels(track, values, from_sources, unambiguous=False):
+    """Normalized genre labels plus their broad categories. A bare "funk" from MusicBrainz/Deezer/
+    Wikidata is American funk; only your review or the AI (whose list separates Funk from
+    Funk Internacional) use "Funk" for Brazilian funk. With unambiguous=True a label only adds its
+    broad category when there is exactly one ("pop rock" is both Rock and Pop, so it adds neither)."""
+    american = from_sources and infer_origin(track, 'genre') != 'ia'
+    values = ['Funk Internacional' if american and norm(x) == 'funk' else x for x in values]
+    result = {norm(x) for x in values}
+    for value in values:
+        categories = broad(value)
+        if not unambiguous or len(categories) == 1: result |= {norm(label) for label in categories}
+    return result
+
+
+def excluded_labels(track, rule):
+    """Labels of the track listed in the playlist's "rótulos que não contam"."""
+    unwanted = {norm(x) for x in rule.get('exclude_labels', [])}
+    if not unwanted: return set()
+    return unwanted & all_genre_labels(track)
+
+
+def all_genre_labels(track):
+    """Genres of the track plus the genre labels of every source (track, album and artist), even
+    weaker ones. Deezer album genres are coarse ("Rap/Hip Hop", "Pop") and replace the artist's
+    "reggaeton" or "trap" as the main genre, but the artist label is still evidence for criteria.
+    Free MusicBrainz tags do not count. With a manual review, only your genres count."""
+    review = track.get('review')
+    if review:
+        return genre_labels(track, review.get('genres', []), False)
+    extra = [l['label'] for l in track.get('source_labels', []) or [] if l.get('kind') in LABEL_KINDS and l.get('label')]
+    return genre_labels(track, track.get('genres', []), True) | genre_labels(track, extra, True, unambiguous=True)
+
+
 def matches_rule(track, rule):
     # OR within each field, AND between fields. Empty rules never match everything.
+    # An excluded label always wins over the inclusion criteria.
+    if excluded_labels(track, rule): return False
     metadata = track.get('review') or track
     criteria = []
     for key in ('genres', 'languages', 'artists'):
@@ -46,14 +83,7 @@ def matches_rule(track, rule):
         if not wanted:
             continue
         values = track.get(key, []) if key == 'artists' else metadata.get(key, [])
-        if key == 'genres':
-            # A bare "funk" from MusicBrainz/Deezer/Wikidata is American funk. Only your review or the
-            # AI (whose list separates Funk from Funk Internacional) use "Funk" for Brazilian funk.
-            american = metadata is track and infer_origin(track, 'genre') != 'ia'
-            values = ['Funk Internacional' if american and norm(x) == 'funk' else x for x in values]
-        actual = {norm(x) for x in values}
-        if key == 'genres':
-            actual.update(norm(label) for value in values for label in broad(value))
+        actual = all_genre_labels(track) if key == 'genres' else {norm(x) for x in values}
         criteria.append(bool(wanted & actual))
     return bool(criteria) and all(criteria)
 
@@ -69,6 +99,11 @@ def infer_origin(track, field):
     if str(track.get('classification_source') or '').startswith('Ollama'): return 'ia'
     if field == 'genre' and track.get('artist_genres'): return 'artista'
     return 'faixa'
+
+
+def needs_artist_labels(track):
+    """True when the artist's genres were not yet collected as extra labels (since 19/11/2026)."""
+    return not track.get('artist_labels') and not track.get('review')
 
 
 def needs_complements(track):
@@ -100,7 +135,7 @@ def needs_routing(track, rules, model):
 def model_may_say_yes(track, rule):
     """A 'yes' from the model counts only when the track has data for the playlist's explicit criteria:
     a genre criterion needs a genre, a language criterion needs a language. Names are never evidence."""
-    if not has_evidence(track): return False
+    if not has_evidence(track) or excluded_labels(track, rule): return False
     if rule.get('genres') and not track.get('genres'): return False
     if rule.get('languages') and not track.get('languages'): return False
     return True
@@ -206,6 +241,11 @@ class Store:
                 if not isinstance(values, list) or len(values) > 30 or any(not isinstance(v, str) or not v.strip() or len(v) > 100 for v in values):
                     raise ValueError('Critérios inválidos: use até 30 valores por campo.')
                 item[key] = list(dict.fromkeys(v.strip() for v in values))
+            exclude = rule.get('exclude_labels', [])
+            if not isinstance(exclude, list) or len(exclude) > 30 or any(not isinstance(v, str) or not v.strip() or len(v) > 100 for v in exclude):
+                raise ValueError('Rótulos que não contam inválidos: use até 30 valores.')
+            # Stored only when used, so existing rules keep the same routing key.
+            if exclude: item['exclude_labels'] = list(dict.fromkeys(v.strip() for v in exclude))
             original = rule.get('previous_name', item['name'] if item['name'] in old_names else None)
             if original is not None:
                 if not isinstance(original, str) or original not in old_names or original in originals:
@@ -249,7 +289,7 @@ class Store:
             if not t: continue
             if t['id'] in old:
                 previous = old[t['id']]
-                for key in ['review', 'genres', 'languages', 'sources', 'lookup', 'lookup_note', 'artist_genres', 'classification_source', 'classification_level', 'source_labels', 'labels_collected', 'routing_required', 'routing', 'genre_origin', 'language_origin', 'artist_checked', 'ai_checked', 'complements_checked']:
+                for key in ['review', 'genres', 'languages', 'sources', 'lookup', 'lookup_note', 'artist_genres', 'classification_source', 'classification_level', 'source_labels', 'labels_collected', 'routing_required', 'routing', 'genre_origin', 'language_origin', 'artist_checked', 'ai_checked', 'complements_checked', 'artist_labels']:
                     if key in previous: t[key] = previous[key]
             found[t['id']] = t
         # A full successful import is committed atomically. An API failure never empties the library.

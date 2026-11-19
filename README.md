@@ -6,7 +6,7 @@ Organizador pessoal que distribui as músicas curtidas no Spotify em playlists p
 
 1. Abra `mvp/INICIAR.cmd` (requer Python 3.10+). O navegador abre em http://127.0.0.1:8765.
 2. Conecte o Spotify (OAuth PKCE, só o Client ID; instruções na tela e em [mvp/README.md](mvp/README.md)).
-3. Em **Escolher critérios**, defina cada playlist: nome, descrição, gêneros, idiomas e/ou artistas. Dentro de um campo vale OU; entre campos vale E (ex.: Trap **e** Português).
+3. Em **Escolher critérios**, defina cada playlist: nome, descrição, gêneros, idiomas, artistas e rótulos que não contam. Dentro de um campo vale OU; entre campos vale E (ex.: Trap **e** Português). Um rótulo que não conta tira a música da playlist (ex.: `trap latino` em Trap - Br).
 4. **1. Classificar músicas**: sincroniza a conta e preenche gênero e idioma pelas fontes; o Ollama completa só o que ficar vazio.
 5. **2. Organizar nas playlists**: o Ollama decide a participação em cada playlist, com justificativa. Confira a prévia e confirme para criar ou completar as playlists.
 
@@ -20,6 +20,8 @@ Cada campo guarda a sua origem, e uma fonte mais forte substitui uma mais fraca:
 |---|---|
 | Gênero | faixa (MusicBrainz/Wikidata) > álbum (Deezer, por ISRC) > artista (MusicBrainz, identidade confirmada) > IA (Ollama) |
 | Idioma | faixa (MusicBrainz/Wikidata) > letra (LRCLIB, detecção local sem IA) > IA (Ollama) |
+
+Os critérios de gênero também consideram os gêneros que cada fonte informou, inclusive os do artista (ex.: "reggaeton" do Bad Bunny no Wikidata), sem trocar o gênero principal.
 
 Na distribuição, o modelo só decide sobre músicas que já têm gênero ou idioma, e um "sim" só vale se a música tiver o dado que a playlist pede. Os critérios explícitos da playlist sempre valem. Detalhes em [mvp/CLASSIFICACAO.md](mvp/CLASSIFICACAO.md).
 
@@ -69,4 +71,4 @@ Este projeto é uma ferramenta pessoal e não comercial. Um site público exigir
 
 - Conta real conectada (351 curtidas). Primeira execução com as fontes novas: 185 músicas consultadas; 157 com gênero e 177 com idioma.
 - Corrigido: a IA distribuía músicas sem dados adivinhando pelo nome do artista; "funk" vindo das fontes agora é tratado como funk internacional.
-- Próximos passos: terminar a etapa 1 nas músicas pendentes; campo "rótulos que não contam" por playlist (generaliza a regra do funk); sugerir playlists para gêneros sem destino (Rock, Pop, Inglês); modo rápido (Deezer/LRCLIB antes do MusicBrainz); filtro "decisões da IA para conferir".
+- Próximos passos: terminar a etapa 1 nas músicas pendentes; sugerir playlists para gêneros sem destino (Rock, Pop, Inglês); modo rápido (Deezer/LRCLIB antes do MusicBrainz); filtro "decisões da IA para conferir".

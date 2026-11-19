@@ -61,3 +61,51 @@ Correções após a primeira execução real, em que o Ollama colocou músicas s
 - **Funk brasileiro**: o rótulo "funk" sozinho vindo de MusicBrainz, Deezer ou Wikidata é tratado como "Funk Internacional" e não atende ao critério Funk. "funk carioca", "baile funk", "brazilian funk", sua revisão e a sugestão de IA ("Funk", separada de "Funk Internacional") continuam valendo. As instruções do modelo explicam isso e dizem que nomes não são evidência de gênero.
 - **Decisões antigas refeitas**: a versão das decisões (`ROUTING_VERSION` em core.py) mudou, então o botão 2 refaz a distribuição das músicas que têm dados. Até lá, só valem os critérios explícitos.
 - **Bug corrigido**: a marca `complements_checked` agora é preservada ao sincronizar, e as músicas não voltam todas para a fila a cada clique.
+
+## Rótulos que não contam (17/11/2026)
+
+Cada playlist tem o campo **Rótulos que não contam**. Se a música tiver um desses gêneros, ela fica fora da playlist, mesmo que atenda aos demais critérios, e um "sim" do Ollama também é descartado.
+
+- Considera os gêneros da música e os rótulos de gênero de todas as fontes (faixa, álbum e artista), inclusive os de origem mais fraca, como "Latin Music" do álbum. Tags livres do MusicBrainz não contam.
+- Com revisão manual, valem só os gêneros que você escreveu.
+- A comparação ignora acentos e maiúsculas e usa as categorias amplas (ex.: excluir "Rock" exclui "alternative rock").
+- O "funk" sozinho das fontes aparece como "funk internacional"; em Funk, use `funk internacional` para deixar isso explícito.
+- Use os nomes como as fontes escrevem (Editar → Informações das fontes). Quando as fontes não diferenciam, a exclusão não ajuda: 21 Savage e Matuê aparecem os dois como `hip hop`, `trap`. Nesse caso, combine com o idioma (ex.: Trap + Português).
+- O campo só é salvo quando preenchido, então playlists sem exclusões mantêm as decisões já tomadas pelo Ollama.
+
+## Modelo recomendado: qwen3.5:9b (18/11/2026)
+
+Teste com 30 músicas da biblioteca cujo gênero e idioma vieram das fontes (gabarito), usando o mesmo prompt do app, numa RTX 5060 Laptop (8 GB):
+
+| Modelo | Respondeu gênero | Acertou gênero | Acertou idioma | Tempo/música |
+|---|---|---|---|---|
+| ministral-3:8b | 1/30 | 1 | 0 | 3,0 s |
+| ministral-3:3b | 2/30 | 2 | 0 | 2,7 s |
+| qwen3.5:4b | 30/30 | 17 | 18/25 | 3,5 s |
+| qwen3.5:9b | 28/30 | 20 | 25/28 | 1,9 s |
+
+- Os modelos ministral marcam "incerto" em quase tudo com este prompt; na prática não completam nada.
+- O qwen3.5:9b cabe inteiro na GPU (5,6 GB) e é o modelo padrão desde 18/11.
+- Modelos com raciocínio (qwen3.5) precisam de `think: false`: sem isso, o raciocínio consome o limite de resposta e toda classificação é rejeitada. O app agora envia `think: false` nas duas chamadas (classificar e distribuir); modelos sem raciocínio ignoram o parâmetro.
+- Erros típicos do 9b: rap brasileiro rotulado como Pop ou Funk (ex.: Orochi), trilha sonora como Trap. Por isso a IA continua só preenchendo campos vazios; revise as sugestões com o filtro "Gênero por IA".
+
+## Critérios de gênero usam os rótulos de todas as fontes (19/11/2026)
+
+O gênero do álbum no Deezer é amplo ("Rap/Hip Hop", "Pop") e, por ser uma origem mais forte, substituía o gênero do artista ("reggaeton", "trap") como gênero principal. Por isso, músicas como LA GRACIOSA (Quevedo) e Me Rehúso (Danny Ocean) não entravam em Reggaeton.
+
+Agora o critério de gênero de uma playlist considera o gênero principal e também os rótulos de gênero de todas as fontes (faixa, álbum e artista), os mesmos usados em "Rótulos que não contam". Tags livres do MusicBrainz continuam fora. Com revisão manual, valem só os seus gêneros. O "funk" sozinho das fontes continua sendo funk internacional.
+
+Efeito na biblioteca real (simulação, sem gravar): Reggaeton 4 → 8, Trap - Br 2 → 5 (Matuê, WIU) e Rock 38 → 42. As demais playlists não mudaram.
+
+Limite: músicas sem nenhum rótulo de reggaeton nas fontes (ex.: faixas do Bad Bunny marcadas só como "latin", "bomba" ou "electronic") dependem do Ollama na etapa 2 ou de revisão manual.
+
+## Gênero do artista sempre coletado como rótulo (19/11/2026)
+
+Antes, o artista só era consultado quando a faixa e o álbum não tinham gênero. Assim, faixas do Bad Bunny com "bomba" ou "latin" nunca recebiam o "reggaeton" que o Wikidata lista para o artista.
+
+- Agora o passo 1 sempre busca os gêneros do artista principal (MusicBrainz e também Wikidata) e os guarda como rótulos `artist-genre`. O gênero principal só vem do artista quando nada mais foi encontrado; a ordem de confiança não muda.
+- A identidade do artista continua conservadora (mesmo critério de antes); nomes ambíguos ficam sem rótulo.
+- O gênero do artista vale para todas as músicas dele. Para evitar exageros, um rótulo complementar só conta pela categoria ampla quando ela é única: "alternative rock" conta como Rock, mas "pop rock" (Rock e Pop) não conta como nenhuma das duas. O nome exato sempre conta. Use revisão manual ou "Rótulos que não contam" para exceções.
+- Músicas já classificadas voltam uma vez para a fila do botão 1 (marca `artist_labels`). As respostas do artista ficam no cache, então cada artista é consultado uma vez.
+
+Teste real (banco temporário, sem gravar): PIToRRO DE COCO e LA CANCIÓN (Bad Bunny, J Balvin) e Criminal (Natti Natasha) passaram a atender Reggaeton.
