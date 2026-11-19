@@ -46,7 +46,10 @@ function go(name) {
   if (!allowed(name)) return;
   screen = name;
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('hidden', s.id !== 'screen-' + name);
+  if (name !== 'game') stopAudio();
   render();
+  if (name === 'game') loadCard().catch(e => notify(e.message, true));
+  if (name === 'playlists') refresh().catch(e => notify(e.message, true));
 }
 for (const b of document.querySelectorAll('[data-go]')) b.onclick = () => go(b.dataset.go);
 
@@ -198,6 +201,169 @@ $('new-playlist').onclick = () => {
   });
 };
 $('start-game').onclick = () => go('game');
+
+// ---------- jogo ----------
+let game = null, chosen = new Set(), busy = false, previewToken = 0;
+const ORIGIN = {faixa: 'pela faixa', album: 'pelo álbum', letra: 'pela letra', artista: 'pelo artista', ia: 'por IA', manual: 'revisão sua'};
+const player = $('player');
+const pref = (key, fallback) => { try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } };
+const setPref = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* sem armazenamento: só não lembra */ } };
+$('autoplay').checked = pref('autoplay', true);
+$('volume').value = pref('volume', 0.7); player.volume = +$('volume').value;
+$('autoplay').onchange = e => setPref('autoplay', e.target.checked);
+$('volume').oninput = e => { player.volume = +e.target.value; setPref('volume', +e.target.value); };
+
+function activeProfiles() { return state.profiles.filter(p => p.active); }
+async function loadCard(id) {
+  const data = await api('game-card' + (id ? '?id=' + encodeURIComponent(id) : ''));
+  showCard(data);
+}
+function showCard(data) {
+  game = data;
+  chosen = new Set(data.marks || []);
+  const pr = data.progress;
+  $('progress-bar').style.width = pr.total ? (100 * pr.decided / pr.total) + '%' : '0';
+  $('progress-text').textContent = `${pr.decided} de ${pr.total} distribuídas` + (pr.skipped ? ` · ${pr.skipped} puladas` : '');
+  const t = data.track;
+  $('board').classList.toggle('hidden', !t);
+  $('game-done').classList.toggle('hidden', !!t);
+  $('skip').disabled = !t;
+  stopAudio();
+  if (!t) return;
+  $('card-title').textContent = t.title;
+  $('card-artists').textContent = t.artists.join(', ');
+  $('card-album').textContent = [t.album, t.year].filter(Boolean).join(' · ');
+  $('card-cover').classList.toggle('hidden', !t.cover);
+  $('card-nocover').classList.toggle('hidden', !!t.cover);
+  if (t.cover) $('card-cover').src = t.cover; else $('card-cover').removeAttribute('src');
+  const chips = [];
+  if (t.genres.length) chips.push(`<span class="chip" title="Gênero ${esc(ORIGIN[t.genre_origin] || '')}">${esc(t.genres.slice(0, 3).join(', '))}<small>${esc(ORIGIN[t.genre_origin] || '')}</small></span>`);
+  else chips.push(`<span class="chip faint">${t.pending ? 'Gênero: buscando…' : 'Gênero desconhecido'}</span>`);
+  if (t.languages.length) chips.push(`<span class="chip" title="Idioma ${esc(ORIGIN[t.language_origin] || '')}">${esc(t.languages.join(', '))}<small>${esc(ORIGIN[t.language_origin] || '')}</small></span>`);
+  else chips.push(`<span class="chip faint">${t.pending ? 'Idioma: buscando…' : 'Idioma desconhecido'}</span>`);
+  const extra = t.labels.filter(l => !t.genres.includes(l)).slice(0, 4);
+  if (extra.length) chips.push(`<span class="chip faint" title="Outros rótulos das fontes">${esc(extra.join(', '))}</span>`);
+  if (t.duration_ms) chips.push(`<span class="chip faint">${Math.floor(t.duration_ms / 60000)}:${String(Math.round(t.duration_ms / 1000) % 60).padStart(2, '0')}</span>`);
+  if (t.bpm) chips.push(`<span class="chip faint">${Math.round(t.bpm)} BPM</span>`);
+  if (t.explicit) chips.push('<span class="chip faint">Explícita</span>');
+  chips.push(`<span class="chip faint">${t.liked ? 'Curtida' + (t.added_at ? ' em ' + new Date(t.added_at).toLocaleDateString('pt-BR') : '') : 'Só em playlist'}</span>`);
+  $('card-chips').innerHTML = chips.join('');
+  renderZones();
+  loadPreview(t.id);
+}
+function renderZones() {
+  const profiles = activeProfiles();
+  const half = Math.ceil(profiles.length / 2);
+  for (const [side, list] of [['zones-left', profiles.slice(0, half)], ['zones-right', profiles.slice(half)]]) {
+    $(side).innerHTML = '';
+    for (const p of list) {
+      const i = profiles.indexOf(p);
+      const zone = $('zone-template').content.firstElementChild.cloneNode(true);
+      zone.dataset.key = p.key;
+      zone.querySelector('kbd').textContent = i + 1;
+      zone.querySelector('.zone-name').textContent = p.name;
+      zone.onclick = () => toggle(p.key);
+      zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('over'); });
+      zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+      zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('over'); mark(p.key); });
+      $(side).append(zone);
+    }
+  }
+  updateZones();
+}
+function updateZones() {
+  if (!game || !game.track) return;
+  for (const zone of document.querySelectorAll('.zone')) {
+    const key = zone.dataset.key, on = chosen.has(key), was = game.in_spotify.includes(key);
+    zone.classList.toggle('on', on);
+    zone.classList.toggle('leaving', was && !on);
+    zone.classList.toggle('suggested', game.suggested.includes(key));
+    zone.setAttribute('aria-pressed', on);
+    zone.querySelector('.zone-state').textContent = on ? (was ? 'Já está' : 'Entra') : was ? 'Vai sair' : game.suggested.includes(key) ? 'Combina' : '';
+  }
+}
+function toggle(key) { if (chosen.has(key)) chosen.delete(key); else chosen.add(key); updateZones(); }
+function mark(key) { chosen.add(key); updateZones(); }
+
+// Arrastar com o ponteiro: o cartão segue o mouse, marca a playlist onde for solto e volta ao lugar.
+const card = $('card');
+let drag = null;
+const zoneAt = (x, y) => document.elementsFromPoint(x, y).map(el => el.closest('.zone')).find(Boolean);
+card.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || e.target.closest('button') || !game?.track) return;
+  drag = {x: e.clientX, y: e.clientY, moved: false, over: null};
+  card.setPointerCapture(e.pointerId);
+});
+card.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+  drag.moved = true;
+  card.classList.add('dragging');
+  card.style.transform = `translate(${dx}px, ${dy}px) rotate(${Math.max(-8, Math.min(8, dx / 30))}deg) scale(.92)`;
+  const zone = zoneAt(e.clientX, e.clientY);
+  if (zone !== drag.over) { drag.over?.classList.remove('over'); zone?.classList.add('over'); drag.over = zone; }
+});
+const endDrag = e => {
+  if (!drag) return;
+  const {over, moved} = drag; drag = null;
+  over?.classList.remove('over');
+  card.classList.remove('dragging');
+  card.style.transform = '';
+  if (moved && over && e.type === 'pointerup') { mark(over.dataset.key); over.classList.add('pulse'); setTimeout(() => over.classList.remove('pulse'), 350); }
+};
+card.addEventListener('pointerup', endDrag);
+card.addEventListener('pointercancel', endDrag);
+card.addEventListener('dragstart', e => e.preventDefault());
+
+async function move(path, data) {
+  if (busy) return;
+  busy = true;
+  try { showCard(await api(path, data)); await refreshProfiles(); }
+  catch (e) { notify(e.message, true); }
+  finally { busy = false; }
+}
+async function refreshProfiles() { const fresh = await api('game'); state.profiles = fresh.profiles; state.progress = fresh.progress; }
+$('next').onclick = () => game?.track && move('game-decide', {id: game.track.id, playlists: [...chosen]});
+$('skip').onclick = () => game?.track && move('game-skip', {id: game.track.id});
+$('undo').onclick = () => move('game-undo', {});
+$('to-preview').onclick = () => go('preview');
+$('done-preview').onclick = () => go('preview');
+
+// Áudio: o link de 30 s do Deezer é buscado na hora (expira) e nunca guardado.
+function stopAudio() {
+  previewToken++;
+  player.pause(); player.removeAttribute('src'); player.load();
+  $('play').textContent = '▶'; $('play').disabled = true; $('audio-bar').style.width = '0';
+  $('audio-status').textContent = '';
+}
+async function loadPreview(id) {
+  const token = ++previewToken;
+  $('audio-status').textContent = 'Buscando prévia…';
+  try {
+    const r = await fetch('/api/preview?id=' + encodeURIComponent(id)).then(x => x.json());
+    if (token !== previewToken) return;
+    if (!r.url) { $('audio-status').textContent = 'Sem prévia de áudio'; return; }
+    player.src = r.url; $('play').disabled = false; $('audio-status').textContent = 'Prévia de 30 s · Deezer';
+    if ($('autoplay').checked) player.play().catch(() => { $('audio-status').textContent = 'Clique em ▶ para ouvir'; });
+  } catch { if (token === previewToken) $('audio-status').textContent = 'Prévia indisponível'; }
+}
+function playPause() { if (!player.src) return; if (player.paused) player.play().catch(() => {}); else player.pause(); }
+$('play').onclick = playPause;
+player.onplay = () => { $('play').textContent = '❚❚'; };
+player.onpause = player.onended = () => { $('play').textContent = '▶'; };
+player.ontimeupdate = () => { $('audio-bar').style.width = player.duration ? (100 * player.currentTime / player.duration) + '%' : '0'; };
+
+document.addEventListener('keydown', e => {
+  if (screen !== 'game' || $('dialog').open || e.target.closest('input, textarea, select')) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); $('undo').click(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey || !game?.track) return;
+  const profiles = activeProfiles();
+  if (/^[1-8]$/.test(e.key) && profiles[+e.key - 1]) { e.preventDefault(); toggle(profiles[+e.key - 1].key); }
+  else if (e.key === 'Enter') { e.preventDefault(); $('next').click(); }
+  else if (e.key === ' ') { e.preventDefault(); playPause(); }
+  else if (e.key.toLowerCase() === 's') { e.preventDefault(); $('skip').click(); }
+});
 
 // ---------- início ----------
 refresh().then(async () => {

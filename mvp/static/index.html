@@ -47,8 +47,48 @@
   </section>
 
   <section id="screen-game" class="screen hidden" aria-labelledby="game-title">
-    <h1 id="game-title">Jogo</h1>
-    <p class="muted">Em construção (etapa 4).</p>
+    <h1 id="game-title" class="sr-only">Jogo</h1>
+    <div class="game-top">
+      <div class="progress"><div id="progress-bar"></div></div>
+      <span id="progress-text"></span>
+      <div class="head-actions">
+        <button id="undo" class="secondary" title="Ctrl+Z">↶ Desfazer</button>
+        <button id="skip" class="secondary" title="S">Pular</button>
+        <button id="to-preview" class="secondary">Ir para a prévia →</button>
+      </div>
+    </div>
+    <div id="board" class="board">
+      <div id="zones-left" class="zones"></div>
+      <div class="card-area">
+        <article id="card" class="card" aria-live="polite">
+          <div class="cover"><img id="card-cover" alt="" draggable="false"><span id="card-nocover" aria-hidden="true">♪</span></div>
+          <div class="card-body">
+            <h2 id="card-title"></h2>
+            <p id="card-artists"></p>
+            <p id="card-album" class="muted"></p>
+            <div id="card-chips" class="chips"></div>
+            <div class="player">
+              <button id="play" class="play" aria-label="Tocar prévia" title="Espaço">▶</button>
+              <div class="track-bar"><div id="audio-bar"></div></div>
+              <span id="audio-status" class="muted"></span>
+            </div>
+          </div>
+        </article>
+        <button id="next" class="primary big" title="Enter">Próxima →</button>
+        <div class="audio-options">
+          <label class="toggle small"><input type="checkbox" id="autoplay" checked><span>Tocar sozinho</span></label>
+          <label class="volume">Volume <input type="range" id="volume" min="0" max="1" step="0.05" value="0.7"></label>
+        </div>
+      </div>
+      <div id="zones-right" class="zones"></div>
+    </div>
+    <p class="hint muted">Arraste o cartão até uma playlist ou aperte <kbd>1</kbd>–<kbd>8</kbd>. Clique de novo para tirar. <kbd>Enter</kbd> próxima · <kbd>Espaço</kbd> tocar/pausar · <kbd>S</kbd> pular · <kbd>Ctrl</kbd>+<kbd>Z</kbd> desfazer.</p>
+    <div id="game-done" class="done hidden">
+      <h2>Todas as músicas foram distribuídas 🎉</h2>
+      <p class="muted">Confira tudo na prévia antes de gravar no Spotify. As puladas voltam para o fim da fila.</p>
+      <button id="done-preview" class="primary big">Ver a prévia →</button>
+    </div>
+    <audio id="player" preload="none"></audio>
   </section>
 
   <section id="screen-preview" class="screen hidden" aria-labelledby="preview-title">
@@ -75,6 +115,10 @@
       <button class="text-button f-delete hidden">Apagar</button>
     </footer>
   </article>
+</template>
+
+<template id="zone-template">
+  <button class="zone" type="button"><kbd></kbd><span class="zone-name"></span><span class="zone-state"></span></button>
 </template>
 
 <datalist id="languages"></datalist>

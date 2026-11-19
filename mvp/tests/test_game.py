@@ -91,11 +91,12 @@ class GameTests(unittest.TestCase):
         self.assertEqual(game.queue(self.store, A)[-1], T2)
         self.assertNotIn(T1, game.queue(self.store, A))
         self.assertEqual(game.progress(self.store, A), {'total': 3, 'decided': 1, 'skipped': 1})
-        self.assertEqual(game.undo(self.store, A), T2)
+        self.assertEqual(game.undo(self.store, A)[0], T2)
         self.assertNotIn(T2, game.decisions(self.store, A))
-        self.assertEqual(game.undo(self.store, A), T1)
+        track, undone = game.undo(self.store, A)
+        self.assertEqual((track, undone['add'], undone['remove']), (T1, [], ['p1']))
         self.assertEqual(game.decisions(self.store, A), {})
-        self.assertIsNone(game.undo(self.store, A))
+        self.assertEqual(game.undo(self.store, A), (None, None))
 
     def test_queue_puts_tracks_with_data_first_grouped(self):
         tracks = {t['id']: t for t in self.store.tracks(A)}
@@ -142,3 +143,56 @@ class ProfileEndpointTests(HTTPTests):
         self.assertEqual(self.post('profile-delete', {'key': 'p1'})[0], 400)
         self.assertEqual(self.post('profile-delete', {'key': new})[0], 200)
         self.assertEqual([p['key'] for p in self.get('game')['profiles']], ['p1'])
+
+
+class CardTests(GameTests):
+    def test_suggested_by_language_or_genre(self):
+        t = {'languages': ['Espanhol'], 'genres': ['Reggaeton'], 'source_labels': []}
+        self.assertTrue(game.suggested(t, {'language': 'espanhol'}))
+        self.assertTrue(game.suggested(t, {'genre': 'reggaeton'}))
+        self.assertFalse(game.suggested(t, {'language': 'Misto'}))
+        self.assertFalse(game.suggested(t, {'genre': '', 'language': ''}))
+        self.assertFalse(game.suggested(t, {'genre': 'rock'}))
+        t['review'] = {'genres': ['Rock'], 'languages': [], 'playlists': [], 'exclude': False}
+        self.assertTrue(game.suggested(t, {'genre': 'rock'}))
+
+    def test_card_shows_marks_and_spotify_membership(self):
+        self.activate('p1', 'p2')
+        game.update_profile(self.store, A, 'p2', {'genre': 'pop'})
+        rows = {t['id']: t for t in self.store.tracks(A)}
+        rows[T1].update(genres=['Pop'], cover='https://i.scdn.co/image/x'); self.store.put(A, rows[T1])
+        c = game.card(self.store, A)
+        self.assertEqual(c['track']['id'], T1)
+        self.assertEqual((c['marks'], c['in_spotify'], c['suggested']), (['p1'], ['p1'], ['p2']))
+        self.assertTrue(c['track']['pending'])
+        game.decide(self.store, A, T1, ['p2'])
+        self.assertNotEqual(game.card(self.store, A)['track']['id'], T1)
+        again = game.card(self.store, A, T1)
+        self.assertEqual((again['marks'], again['decided']), (['p2'], True))
+        for t in (T2, T3): game.decide(self.store, A, t, [])
+        done = game.card(self.store, A)
+        self.assertIsNone(done['track']); self.assertEqual(done['remaining'], 0)
+
+
+class GameEndpointTests(ProfileEndpointTests):
+    def test_game_moves(self):
+        account = self.session['account']
+        store = self.server.STORE
+        store.import_tracks(account, [raw(T1), raw(T2)])
+        lists = [{'id': 'p1', 'name': 'Rock', 'description': '', 'tracks': [{'id': T1}]}]
+        store.save_spotify_library(account, {'playlists': lists, 'synced_at': 5})
+        game.sync_profiles(store, account, lists)
+        game.update_profile(store, account, 'p1', {'active': True})
+        first = self.get('game-card')['track']['id']
+        status, nxt = self.post('game-decide', {'id': first, 'playlists': ['p1']})
+        self.assertEqual(status, 200, nxt)
+        self.assertNotEqual(nxt['track']['id'], first)
+        self.assertEqual(self.post('game-decide', {'id': first, 'playlists': ['zzz']})[0], 400)
+        status, after = self.post('game-skip', {'id': nxt['track']['id']})
+        self.assertEqual(after['track']['id'], nxt['track']['id'])  # only skipped left
+        self.assertEqual(self.post('game-undo', {})[1]['track']['id'], nxt['track']['id'])
+        undone = self.post('game-undo', {})[1]
+        self.assertEqual((undone['track']['id'], undone['marks']), (first, ['p1']))
+        self.assertNotIn(first, game.decisions(store, account))
+        self.assertEqual(self.post('game-undo', {})[0], 400)
+        self.assertEqual(self.get('game-card?id=' + first)['track']['id'], first)

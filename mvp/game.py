@@ -184,16 +184,18 @@ def skip(store, account, track):
 
 
 def undo(store, account):
-    """Undo the last move. Returns the track id it touched (the card to show again), or None."""
+    """Undo the last move. Returns (track id, the choice that was undone) so the card can show
+    that choice again for you to adjust, or (None, None)."""
     ensure(store)
     with store.connect() as db:
         row = db.execute('SELECT seq,track,before FROM history WHERE account=? ORDER BY seq DESC LIMIT 1', (account,)).fetchone()
-        if not row: return None
+        if not row: return None, None
         seq, track, before = row
+        undone = db.execute('SELECT data FROM decisions WHERE account=? AND track=?', (account, track)).fetchone()
         if before is None: db.execute('DELETE FROM decisions WHERE account=? AND track=?', (account, track))
         else: db.execute('INSERT OR REPLACE INTO decisions VALUES (?,?,?)', (account, track, before))
         db.execute('DELETE FROM history WHERE seq=?', (seq,))
-    return track
+    return track, json.loads(undone[0]) if undone else None
 
 
 def queue(store, account):
@@ -241,3 +243,50 @@ def overview(store, account):
     top = lambda counts, n: [k for k, _ in sorted(counts.items(), key=lambda kv: (-kv[1], norm(kv[0])))[:n]]
     return {'profiles': rows, 'max_active': MAX_ACTIVE, 'genres': top(genres, 40), 'languages': top(languages, 20),
             'progress': progress(store, account)}
+
+
+# ---------- cartão do jogo ----------
+
+def suggested(track, profile):
+    """True when the playlist's language or genre/mood matches the track. Only a highlight for you;
+    it never decides anything. "Misto" and empty fields never match."""
+    from core import all_genre_labels
+    meta = track.get('review') or track
+    language = norm(profile.get('language') or '')
+    if language and language != 'misto' and language in {norm(x) for x in meta.get('languages') or []}: return True
+    genre = norm(profile.get('genre') or '')
+    if genre:
+        labels = all_genre_labels(track)
+        if any(genre == l or (len(genre) >= 3 and genre in l) for l in labels): return True
+    return False
+
+
+def card(store, account, track_id=None, preset=None):
+    """The card to show: the given track, or the first one in the queue. None when nothing is left."""
+    rows = {t['id']: t for t in store.tracks(account, active=True)}
+    if track_id is None:
+        order = queue(store, account)
+        track_id = order[0] if order else None
+        remaining = len(order)
+    else:
+        remaining = len(queue(store, account))
+    if track_id not in rows: return {'track': None, 'progress': progress(store, account), 'remaining': remaining}
+    t = rows[track_id]
+    active = [p for p in profiles(store, account) if p.get('active')]
+    current = membership(store, account)
+    decision = decisions(store, account).get(track_id)
+    keys = [p['key'] for p in active]
+    meta = t.get('review') or t
+    from core import infer_origin
+    info = {k: t.get(k) for k in ('id', 'title', 'artists', 'album', 'year', 'cover', 'explicit', 'duration_ms', 'bpm', 'liked', 'added_at', 'url')}
+    info.update(genres=meta.get('genres') or [], languages=meta.get('languages') or [],
+                genre_origin='manual' if t.get('review') else infer_origin(t, 'genre'),
+                language_origin='manual' if t.get('review') else infer_origin(t, 'language'),
+                pending=not t.get('quick_checked') and not t.get('review'),
+                labels=list(dict.fromkeys(l['label'] for l in t.get('source_labels') or [] if l.get('kind') in ('genre', 'album-genre', 'artist-genre')))[:8])
+    shown = preset if preset and not preset.get('skipped') else decision
+    return {'track': info, 'marks': marks(track_id, shown, current, keys),
+            'in_spotify': [k for k in keys if track_id in current.get(k, set())],
+            'suggested': [p['key'] for p in active if suggested(t, p)],
+            'decided': bool(decision) and not decision.get('skipped'),
+            'progress': progress(store, account), 'remaining': remaining}

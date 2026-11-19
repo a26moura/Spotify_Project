@@ -77,7 +77,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control','no-store')
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Referrer-Policy','no-referrer')
-        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://i.scdn.co; media-src https://*.dzcdn.net; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
         if getattr(self,'new_cookie',None): self.send_header('Set-Cookie','sp_session='+self.new_cookie+'; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200')
         if location: self.send_header('Location',location)
         self.end_headers()
@@ -126,6 +126,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(data=dict(game.overview(STORE,a),account=a,display_name=s.get('display_name','Piloto local'),connected=bool(s.get('token')),
                         configured=bool(CLIENT_ID),redirect=REDIRECT,csrf=s['csrf'],needs_sync=bool(s.get('token')) and not s.get('synced',False),
                         synced_at=library.get('synced_at'),collect=COLLECTOR.status(a)))
+                if url.path == '/api/game-card':
+                    ident=urllib.parse.parse_qs(url.query).get('id',[None])[0]
+                    return self.send(data=game.card(STORE,s['account'],ident))
                 if url.path == '/api/collect-status':
                     return self.send(data=COLLECTOR.status(s['account']))
                 if url.path == '/auth/start':
@@ -234,6 +237,17 @@ class Handler(BaseHTTPRequestHandler):
                 if path == '/api/profile-delete':
                     game.delete_profile(STORE,account,str(data.get('key','')))
                     return self.send(data={'message':'Playlist nova apagada do app.'})
+                if path == '/api/game-decide':
+                    if not isinstance(data.get('playlists'),list):raise ValueError('Requisição inválida.')
+                    game.decide(STORE,account,str(data.get('id','')),data['playlists'])
+                    return self.send(data=game.card(STORE,account))
+                if path == '/api/game-skip':
+                    game.skip(STORE,account,str(data.get('id','')))
+                    return self.send(data=game.card(STORE,account))
+                if path == '/api/game-undo':
+                    ident,undone=game.undo(STORE,account)
+                    if ident is None:raise ValueError('Não há jogada para desfazer.')
+                    return self.send(data=game.card(STORE,account,ident,preset=undone))
                 if path == '/api/collect-start':
                     started=COLLECTOR.start(account)
                     return self.send(data=dict(COLLECTOR.status(account),started=started))

@@ -15,13 +15,18 @@ names = [('Bailando', 'Enrique', 'Espanhol', 'Reggaeton'), ('Garota', 'Tom', 'Po
 raw = [{'id': tid(i), 'name': n, 'artists': [{'name': a}], 'album': {'name': n + ' (álbum)', 'release_date': '2015'}} for i, (n, a, _, _) in enumerate(names)]
 server.STORE.import_tracks(A, raw[:5], raw[5:])
 for i, t in enumerate(server.STORE.tracks(A)):
-    t.update(languages=[names[i][2]], genres=[names[i][3]], quick_checked=i < 4); server.STORE.put(A, t)
+    t.update(languages=[names[i][2]], genres=[names[i][3]], quick_checked=i < 4, duration_ms=200000 + i * 7000)
+    if names[i][0] == 'Yellow': t['deezer_id'] = 3128096  # prévia real de 30 s (Deezer, pública)
+    server.STORE.put(A, t)
 lists = [{'id': 'pl1', 'name': 'Latinas', 'description': 'Para dançar', 'tracks': [{'id': tid(0)}]},
          {'id': 'pl2', 'name': 'Rock', 'description': '', 'tracks': [{'id': tid(2)}, {'id': tid(5)}]},
          {'id': 'pl3', 'name': 'Brasil', 'description': 'MPB e sertanejo', 'tracks': []}]
 server.STORE.save_spotify_library(A, {'playlists': lists, 'synced_at': 1})
 game.sync_profiles(server.STORE, A, lists)
 game.update_profile(server.STORE, A, 'pl1', {'active': True, 'language': 'Espanhol'})
+game.update_profile(server.STORE, A, 'pl2', {'active': True, 'genre': 'rock'})
+game.update_profile(server.STORE, A, 'pl3', {'active': True, 'language': 'Português'})
+game.create_profile(server.STORE, A, {'name': 'Treino', 'genre': 'reggaeton'})
 
 original = server.new_session
 def demo_session():
