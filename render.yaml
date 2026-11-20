@@ -1,0 +1,23 @@
+# Render (https://render.com): New > Blueprint, escolha este repositório.
+# Preencha PUBLIC_URL e SPOTIFY_CLIENT_ID quando o Render pedir (veja mvp/README.md, "Rodar como site").
+services:
+  - type: web
+    name: spotify-project
+    runtime: python
+    plan: starter            # o disco persistente não existe no plano grátis
+    buildCommand: "true"     # só biblioteca padrão: nada para instalar
+    startCommand: python mvp/server.py
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: PUBLIC_URL      # ex.: https://spotify-project.onrender.com (sem barra no fim)
+        sync: false
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_PROJECT_DB
+        value: /var/data/app.sqlite3
+    disk:
+      name: dados
+      mountPath: /var/data
+      sizeGB: 1

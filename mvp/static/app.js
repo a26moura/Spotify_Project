@@ -73,6 +73,7 @@ function render() {
 
 // ---------- conectar e importar ----------
 function configure() {
+  if (state.online) return notify('O site ainda não tem um Client ID do Spotify. Quem administra o servidor precisa definir SPOTIFY_CLIENT_ID.', true);
   modal('Conectar sua conta', `<p>Crie um aplicativo na sua conta do <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener noreferrer">Spotify for Developers</a>.</p>
     <ol><li>Crie um app e selecione o uso da Web API.</li><li>Cadastre exatamente este endereço de retorno: <code>${esc(state.redirect)}</code>.</li><li>Copie o Client ID para o campo abaixo.</li><li>Se necessário, adicione sua conta aos usuários autorizados do app.</li></ol>
     <label class="field">Client ID<input id="client-id" autocomplete="off" maxlength="32" placeholder="Identificador de 32 caracteres"></label>

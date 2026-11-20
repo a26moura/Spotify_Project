@@ -1,4 +1,6 @@
-"""Servidor local do jogo. Escuta só em 127.0.0.1; tokens ficam na memória até sair ou reiniciar.
+"""Servidor do jogo. Sem PUBLIC_URL, escuta só em 127.0.0.1 (uso local). Com PUBLIC_URL (ex.:
+https://meuapp.onrender.com), roda como site: escuta em 0.0.0.0, o Client ID vem de SPOTIFY_CLIENT_ID
+e só quem conectou o Spotify pode mexer nos dados. Tokens ficam na memória até sair ou reiniciar.
 
 Fluxo: conectar → sincronizar (curtidas + suas playlists) → montar playlists → jogo → prévia →
 gravar no Spotify. Só /api/publish-execute grava no Spotify, e só com uma prévia confirmada.
@@ -24,7 +26,14 @@ import publish
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get('PORT', '8765'))
-ORIGIN = f'http://127.0.0.1:{PORT}'
+PUBLIC_URL = os.environ.get('PUBLIC_URL', '').strip().rstrip('/')
+ONLINE = bool(PUBLIC_URL)
+if ONLINE and not re.fullmatch(r'https?://[A-Za-z0-9.-]+(:[0-9]+)?', PUBLIC_URL):
+    raise SystemExit('PUBLIC_URL inválida. Use só o endereço, sem caminho: https://meuapp.onrender.com')
+ORIGIN = PUBLIC_URL or f'http://127.0.0.1:{PORT}'
+BIND = os.environ.get('BIND', '0.0.0.0' if ONLINE else '127.0.0.1')
+# Sem conexão ao Spotify, no site só dá para ver a tela inicial, entrar e sair.
+ANONYMOUS_POST = {'/api/logout'}
 REDIRECT = ORIGIN + '/callback'
 STORE = Store(os.environ.get('SPOTIFY_PROJECT_DB', str(ROOT / 'runtime/app.sqlite3')))
 ENRICHER = Enricher(STORE)
@@ -50,6 +59,14 @@ def load_client_id():
 
 
 CLIENT_ID = load_client_id()
+
+
+def expected_host():
+    return urllib.parse.urlsplit(ORIGIN).netloc
+
+
+def cookie_flags():
+    return '; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200' + ('; Secure' if ORIGIN.startswith('https://') else '')
 
 
 def new_session():
@@ -84,7 +101,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('Content-Security-Policy', CSP)
-        if getattr(self, 'new_cookie', None): self.send_header('Set-Cookie', 'sp_session=' + self.new_cookie + '; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200')
+        if ORIGIN.startswith('https://'): self.send_header('Strict-Transport-Security', 'max-age=31536000')
+        if getattr(self, 'new_cookie', None): self.send_header('Set-Cookie', 'sp_session=' + self.new_cookie + cookie_flags())
         if location: self.send_header('Location', location)
         self.end_headers()
         self.wfile.write(body)
@@ -105,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
         game stays responsive."""
         try:
             with LOCK:
-                if self.headers.get('Host') != f'127.0.0.1:{PORT}': return self.send(403, {'error': 'Use ' + ORIGIN})
+                if self.headers.get('Host') != expected_host(): return self.send(403, {'error': 'Use ' + ORIGIN})
                 s = self.session()
                 ident = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get('id', [''])[0]
                 track = next((t for t in STORE.tracks(s['account'], active=True) if t['id'] == ident), None)
@@ -120,13 +138,13 @@ class Handler(BaseHTTPRequestHandler):
         if urllib.parse.urlsplit(self.path).path == '/api/preview': return self.preview()
         with LOCK:
             try:
-                if self.headers.get('Host') != f'127.0.0.1:{PORT}': return self.send(403, {'error': 'Use ' + ORIGIN})
+                if self.headers.get('Host') != expected_host(): return self.send(403, {'error': 'Use ' + ORIGIN})
                 s = self.session()
                 url = urllib.parse.urlsplit(self.path)
                 a = s['account']
                 if url.path == '/api/game':
                     return self.send(data=dict(game.overview(STORE, a), account=a, display_name=s.get('display_name', 'Piloto local'),
-                        connected=bool(s.get('token')), configured=bool(CLIENT_ID), redirect=REDIRECT, csrf=s['csrf'],
+                        connected=bool(s.get('token')), configured=bool(CLIENT_ID), online=ONLINE, redirect=REDIRECT, csrf=s['csrf'],
                         needs_sync=bool(s.get('token')) and not s.get('synced', False),
                         synced_at=STORE.spotify_library(a).get('synced_at'), collect=COLLECTOR.status(a)))
                 if url.path == '/api/game-card':
@@ -169,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(404, {'error': 'Página não encontrada.'})
             except (ValueError, RemoteError) as error: self.send(400, {'error': str(error)})
             except Exception:
-                self.send(500, {'error': 'Falha interna. Os dados salvos foram preservados. Verifique o aplicativo local.'})
+                self.send(500, {'error': 'Falha interna. Os dados salvos foram preservados. Tente de novo.'})
 
     # ---------- POST ----------
 
@@ -177,7 +195,7 @@ class Handler(BaseHTTPRequestHandler):
         global CLIENT_ID
         with LOCK:
             try:
-                if self.headers.get('Host') != f'127.0.0.1:{PORT}' or self.headers.get('Origin') != ORIGIN: return self.send(403, {'error': 'Origem não permitida.'})
+                if self.headers.get('Host') != expected_host() or self.headers.get('Origin') != ORIGIN: return self.send(403, {'error': 'Origem não permitida.'})
                 s = self.session()
                 if not secrets.compare_digest(self.headers.get('X-CSRF-Token', ''), s['csrf']): return self.send(403, {'error': 'Recarregue a página para continuar.'})
                 size = int(self.headers.get('Content-Length', '0'))
@@ -185,18 +203,21 @@ class Handler(BaseHTTPRequestHandler):
                 data = json.loads(self.rfile.read(size) or b'{}')
                 if not isinstance(data, dict): raise ValueError('Requisição inválida.')
                 path = urllib.parse.urlsplit(self.path).path
+                if ONLINE and not s.get('token') and path not in ANONYMOUS_POST:
+                    return self.send(401, {'error': 'Conecte o Spotify para continuar.'})
                 account = s['account']
                 handler = getattr(self, 'post_' + path.removeprefix('/api/').replace('-', '_'), None) if path.startswith('/api/') else None
                 if not handler: return self.send(404, {'error': 'Página não encontrada.'})
                 return handler(s, account, data)
             except (ValueError, RemoteError) as error: self.send(400, {'error': str(error)})
             except Exception:
-                self.send(500, {'error': 'Falha interna. Os dados salvos foram preservados. Verifique o aplicativo local.'})
+                self.send(500, {'error': 'Falha interna. Os dados salvos foram preservados. Tente de novo.'})
 
     # Conta
 
     def post_config(self, s, account, data):
         global CLIENT_ID
+        if ONLINE: raise ValueError('No site, o Client ID é definido pela variável SPOTIFY_CLIENT_ID do servidor.')
         client = data.get('client_id', '').strip()
         if not re.fullmatch('[a-fA-F0-9]{32}', client): raise ValueError('Client ID inválido. Copie o identificador de 32 caracteres do Spotify.')
         if any(v.get('token') for v in SESSIONS.values()): raise ValueError('Desconecte as contas antes de trocar o aplicativo.')
@@ -326,9 +347,10 @@ if __name__ == '__main__':
     import sys
     import webbrowser
     print('Spotify Project: ' + ORIGIN, flush=True)
-    print('Piloto local. Para encerrar: Ctrl+C. Tokens não são gravados em disco.', flush=True)
+    print(('Modo site, escutando em ' + BIND + ':' + str(PORT) if ONLINE else 'Piloto local') + '. Para encerrar: Ctrl+C. Tokens não são gravados em disco.', flush=True)
+    if ONLINE and not CLIENT_ID: print('Aviso: defina SPOTIFY_CLIENT_ID para permitir o login.', flush=True)
     try:
-        http = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
+        http = ThreadingHTTPServer((BIND, PORT), Handler)
     except OSError:
         print('Não foi possível iniciar. A porta ' + str(PORT) + ' pode estar ocupada. Feche a execução anterior e tente novamente.', flush=True)
         raise SystemExit(1)

@@ -1,4 +1,4 @@
-# Spotify Project — app local
+# Spotify Project — app local e site
 
 ## Iniciar
 
@@ -31,9 +31,29 @@ Informe só o **Client ID** (não é segredo; fica em `runtime/config.json`, ou 
 
 SQLite em `runtime/app.sqlite3`, separado por ID da conta Spotify: músicas e informações coletadas, cópia das playlists da última sincronização, perfis das playlists e escolhas do jogo (guardadas como "entra"/"sai" em relação ao Spotify, com histórico para desfazer). Tokens OAuth ficam só na memória e somem ao desconectar ou reiniciar.
 
-O servidor escuta só em `127.0.0.1`, valida Host, Origin e token CSRF nas mutações, usa cookies HttpOnly/SameSite=Lax e não registra URLs de callback. A política de conteúdo permite só capas do Spotify (`i.scdn.co`) e áudio do Deezer (`*.dzcdn.net`) além do próprio app.
+Sem `PUBLIC_URL`, o servidor escuta só em `127.0.0.1`. Em qualquer modo, valida Host, Origin e token CSRF nas mutações, usa cookies HttpOnly/SameSite=Lax (com `Secure` em HTTPS) e não registra URLs de callback. A política de conteúdo permite só capas do Spotify (`i.scdn.co`) e áudio do Deezer (`*.dzcdn.net`) além do próprio app.
 
-Esta é uma ferramenta local, **não uma implantação pública**.
+## Rodar como site
+
+O mesmo `server.py` vira site quando a variável `PUBLIC_URL` existe. Nesse modo ele escuta em `0.0.0.0`, aceita só pedidos para o endereço de `PUBLIC_URL`, lê o Client ID só de `SPOTIFY_CLIENT_ID` (a tela de configurar fica desligada) e recusa qualquer mudança de quem não conectou o Spotify.
+
+| Variável | Valor |
+|---|---|
+| `PUBLIC_URL` | Endereço do site, sem caminho nem barra final: `https://spotify-project.onrender.com` |
+| `SPOTIFY_CLIENT_ID` | Client ID do app no Spotify for Developers |
+| `SPOTIFY_PROJECT_DB` | Banco num **disco persistente** (ex.: `/var/data/app.sqlite3`); sem ele, o progresso some a cada publicação |
+| `PORT` | Normalmente definida pela hospedagem |
+
+Passos no Render (o `render.yaml` na raiz já descreve o serviço):
+
+1. Envie a branch para o GitHub e, no Render, crie um **Blueprint** a partir do repositório.
+2. Preencha `PUBLIC_URL` com o endereço que o Render der ao serviço e `SPOTIFY_CLIENT_ID`.
+3. No painel do Spotify, adicione o endereço de retorno `PUBLIC_URL` + `/callback` (ex.: `https://spotify-project.onrender.com/callback`). O endereço local pode continuar cadastrado.
+4. No modo de desenvolvimento do Spotify, só as contas cadastradas em **User Management** conseguem entrar.
+
+Outras hospedagens (Railway, Fly.io) funcionam igual: comando `python mvp/server.py`, as variáveis acima e um volume para o banco.
+
+Sessões e tokens continuam só na memória: depois de cada reinício ou publicação é preciso conectar de novo (as escolhas ficam no banco).
 
 ## Testes
 

@@ -53,6 +53,21 @@ class ServerTests(HTTPTests):
         with self.assertRaises(urllib.error.HTTPError) as error: urllib.request.urlopen(bad)
         self.assertEqual(error.exception.code, 400); error.exception.close()
 
+    def test_online_mode_requires_login_and_env_client_id(self):
+        with patch.object(self.server, 'ONLINE', True):
+            self.assertEqual(self.post('game-skip', {'id': ID1})[0], 401)
+            self.assertEqual(self.post('config', {'client_id': 'a' * 32})[0], 401)
+            self.session['token'] = {'access_token': 'fake', 'expires_at': time.time() + 3600}
+            self.assertEqual(self.post('config', {'client_id': 'a' * 32})[0], 400)
+            self.assertTrue(self.get('game')['online'])
+            self.assertEqual(self.post('logout', {})[0], 200)
+
+    def test_https_origin_sets_secure_cookie(self):
+        with patch.object(self.server, 'ORIGIN', 'https://meuapp.example'):
+            self.assertIn('; Secure', self.server.cookie_flags())
+            self.assertEqual(self.server.expected_host(), 'meuapp.example')
+        self.assertNotIn('Secure', self.server.cookie_flags())
+
 
 class StoreTests(unittest.TestCase):
     def setUp(self):

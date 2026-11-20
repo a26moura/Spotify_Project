@@ -1,6 +1,6 @@
 # Spotify Project
 
-Organizador pessoal em forma de jogo: as suas músicas aparecem uma a uma, com capa, informações e prévia de 30 s, e você as arrasta para as playlists onde elas combinam. No final, uma prévia mostra o que entra e o que sai de cada playlist, e só depois da sua confirmação o app grava no Spotify. Roda localmente (Python 3, só biblioteca padrão).
+Organizador pessoal em forma de jogo: as suas músicas aparecem uma a uma, com capa, informações e prévia de 30 s, e você as arrasta para as playlists onde elas combinam. No final, uma prévia mostra o que entra e o que sai de cada playlist, e só depois da sua confirmação o app grava no Spotify. Roda localmente (Python 3, só biblioteca padrão) ou como site, com a variável `PUBLIC_URL` (veja [mvp/README.md](mvp/README.md#rodar-como-site)).
 
 ## Como usar
 
@@ -31,6 +31,7 @@ O idioma e o gênero da playlist só destacam sugestões no jogo ("Combina"); qu
 ```text
 Spotify_Project/
   README.md              Este arquivo
+  render.yaml            Serviço para hospedar no Render
   CORRECOES.md           Log de bugs corrigidos
   mvp/
     INICIAR.cmd          Inicia o servidor local
